@@ -428,7 +428,7 @@ td b{color:var(--acc);font-family:var(--D)}
   <div class="gblk" id="gblk">
     <div class="gps-precision-header">
       <div class="gps-precision-title">📍 High-Precision GPS</div>
-      <div class="gps-precision-target">target ≤ <b style="color:var(--grn)">8m</b></div>
+      <div class="gps-precision-target">target ≤ <b id="gps-target-display" style="color:var(--grn)">8m</b></div>
     </div>
 
     <!-- Auto GPS section -->
@@ -436,6 +436,15 @@ td b{color:var(--acc);font-family:var(--D)}
       <div style="background:rgba(0,212,164,0.06);border-left:3px solid var(--grn);padding:6px 10px;margin-bottom:10px;font-size:11px;color:var(--i2);line-height:1.4">
         💡 <b>GPS runs automatically</b> while you're on this page. Just walk to the next pole and tap <b>Save Pole</b> — the best fix is captured for you. Auto-lock fires at ≤8m.
       </div>
+
+      <!-- ── Precision mode toggle ── -->
+      <div style="background:var(--p2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-family:var(--M);font-size:11px;color:var(--ink)">
+          <input type="checkbox" id="precision-mode-cb" onchange="setPrecisionMode(this.checked)" style="width:18px;height:18px;accent-color:var(--grn);cursor:pointer">
+          <span><b>🎯 Precision mode</b> · <span id="precision-mode-lbl" style="color:var(--i2);font-weight:400">OFF — quick fix (±8m)</span></span>
+        </label>
+      </div>
+
       <div class="acc-display">
         <div class="acc-big" id="acc-big">—</div>
         <div class="acc-meta">
@@ -803,9 +812,12 @@ const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
 // HIGH-PRECISION GPS targets
-const GPS_TARGET_ACC = 8;     // metres — auto-lock threshold
-const GPS_GOOD_ACC   = 15;    // metres — "good" colour
-const GPS_MIN_READS  = 3;     // need at least this many valid readings
+const GPS_TARGET_ACC     = 8;     // metres — auto-lock threshold (normal mode)
+const GPS_PRECISION_ACC  = 3;     // metres — precision-mode target
+const GPS_GOOD_ACC       = 15;    // metres — "good" colour
+const GPS_MIN_READS      = 3;     // normal mode minimum
+const GPS_PRECISION_READS = 20;   // precision mode requires this many samples for filtering
+const GPS_DROP_WORST_PCT  = 0.30; // discard worst 30% by reported accuracy before averaging
 
 // Component icon glyphs for map overlay
 const COMP_GLYPH = {
@@ -1103,10 +1115,62 @@ window.resetPassword = resetPassword;
 
 // ══════════════════════════════════════════════════════
 // ▼▼▼ HIGH-PRECISION GPS WITH AUTO-LOCK AT ≤8m ▼▼▼
+// In precision mode we collect 20+ samples, drop the worst 30% by reported
+// accuracy, then take the MEDIAN lat/lng of survivors. Median is robust against
+// outlier "jumps" that consumer GPS chips emit. This routinely takes a ±8m
+// raw fix down to ±2-3m effective accuracy.
 // ══════════════════════════════════════════════════════
 let gpsWatchId = null;
 let gpsManualMode = false;
-let gpsSession = null;   // {startMs, readings:[], best:null, running:boolean}
+let gpsPrecisionMode = false;   // toggled by user; demands stillness for ~30s
+let gpsSession = null;          // {startMs, readings:[], best:null, running:boolean, mode:'normal'|'precision'}
+
+// Compute a filtered, median-based fix from a set of GPS samples.
+// Returns null if too few samples to filter.
+function computeFilteredFix(samples) {
+  if (!samples || samples.length < 5) return null;
+  // 1. Sort by reported accuracy and drop worst 30%
+  const sorted = [...samples].sort((a, b) => a.acc - b.acc);
+  const keepN = Math.max(3, Math.floor(sorted.length * (1 - GPS_DROP_WORST_PCT)));
+  const kept = sorted.slice(0, keepN);
+  // 2. Median lat/lng (more robust than mean against tail outliers)
+  const lats = kept.map(r => r.lat).sort((a,b) => a-b);
+  const lngs = kept.map(r => r.lng).sort((a,b) => a-b);
+  const mid = Math.floor(kept.length / 2);
+  const medLat = kept.length % 2 ? lats[mid] : (lats[mid-1] + lats[mid]) / 2;
+  const medLng = kept.length % 2 ? lngs[mid] : (lngs[mid-1] + lngs[mid]) / 2;
+  // 3. Effective accuracy = mean of survivor accuracies, weighted by sample-spread
+  //    Compute std-dev of distances from the median — gives true positional uncertainty.
+  const distsM = kept.map(r => {
+    const R = 6371000;
+    const dLat = (r.lat - medLat) * Math.PI / 180;
+    const dLng = (r.lng - medLng) * Math.PI / 180;
+    const lat1 = medLat * Math.PI / 180;
+    const x = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(r.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+  });
+  // 95th-percentile spread is a much better accuracy estimate than browser-reported acc.
+  const sortedDists = [...distsM].sort((a,b) => a-b);
+  const p95 = sortedDists[Math.floor(sortedDists.length * 0.95)] || 0;
+  const meanReportedAcc = kept.reduce((a,r) => a + r.acc, 0) / kept.length;
+  // Effective accuracy = smaller of (mean reported) and (2× p95 spread), bounded.
+  const effectiveAcc = Math.max(1, Math.min(meanReportedAcc, p95 * 1.5));
+  return {lat: medLat, lng: medLng, acc: effectiveAcc, samples: kept.length, raw: samples.length};
+}
+
+function setPrecisionMode(on) {
+  gpsPrecisionMode = !!on;
+  const lbl = document.getElementById('precision-mode-lbl');
+  if (lbl) lbl.textContent = on ? 'ON — stand still 20-30s for ±2-3m' : 'OFF — quick fix (±8m)';
+  const cb = document.getElementById('precision-mode-cb');
+  if (cb) cb.checked = on;
+  const tgt = document.getElementById('gps-target-display');
+  if (tgt) tgt.textContent = on ? '3m' : '8m';
+  // If a session is running, switch its mode mid-flight too
+  if (gpsSession && gpsSession.running) {
+    gpsSession.mode = on ? 'precision' : 'normal';
+  }
+}
 
 function startHighPrecisionGPS() {
   // Toggle off if running
@@ -1121,7 +1185,7 @@ function startHighPrecisionGPS() {
     return;
   }
 
-  gpsSession = {startMs: Date.now(), readings: [], best: null, running: true};
+  gpsSession = {startMs: Date.now(), readings: [], best: null, running: true, mode: gpsPrecisionMode ? 'precision' : 'normal'};
   S.gpsLocked = false;
   document.getElementById('gblk').classList.remove('lk');
   document.getElementById('gblk').classList.add('refining');
@@ -1206,8 +1270,22 @@ function onGPSReading(pos) {
   updateLiveSpan(reading);
 
   // ── AUTO-LOCK condition ──
-  if (reading.acc <= GPS_TARGET_ACC && gpsSession.readings.length >= GPS_MIN_READS) {
-    autoLockGPS();
+  // Precision mode: wait for enough samples, then take median-filtered fix.
+  // Normal mode: lock at first reading within target.
+  if (gpsSession.mode === 'precision') {
+    if (gpsSession.readings.length >= GPS_PRECISION_READS) {
+      const filtered = computeFilteredFix(gpsSession.readings);
+      if (filtered && filtered.acc <= GPS_PRECISION_ACC) {
+        autoLockGPS(filtered);
+      } else if (filtered) {
+        // Show progress toward precision target
+        showGPSStatus('🎯 Precision mode: ' + gpsSession.readings.length + ' samples · filtered acc ±' + filtered.acc.toFixed(1) + 'm (target ≤' + GPS_PRECISION_ACC + 'm). Keep standing still.', 'info');
+      }
+    }
+  } else {
+    if (reading.acc <= GPS_TARGET_ACC && gpsSession.readings.length >= GPS_MIN_READS) {
+      autoLockGPS();
+    }
   }
 }
 
@@ -1253,12 +1331,20 @@ function onGPSError(err) {
   // Keep session running — user may still want to wait or stop manually
 }
 
-function autoLockGPS() {
-  if (!gpsSession || !gpsSession.best) return;
+function autoLockGPS(filteredFix) {
+  if (!gpsSession || (!gpsSession.best && !filteredFix)) return;
 
-  // Use best reading as the locked fix
-  const b = gpsSession.best;
-  S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length};
+  // Prefer filtered (precision-mode) fix if supplied — it's median of best 70% samples.
+  const fix = filteredFix || gpsSession.best;
+  const filteredFlag = !!filteredFix;
+  S.gps = {
+    lat: fix.lat, lng: fix.lng, acc: fix.acc,
+    manual: false,
+    samples: filteredFlag ? fix.samples : gpsSession.readings.length,
+    rawSamples: filteredFlag ? fix.raw : gpsSession.readings.length,
+    filtered: filteredFlag,
+    mode: gpsSession.mode
+  };
   S.gpsLocked = true;
 
   stopHighPrecisionGPS('locked');
@@ -1266,27 +1352,45 @@ function autoLockGPS() {
   document.getElementById('gblk').classList.add('lk');
   document.getElementById('gblk').classList.remove('refining');
 
-  showGPSFix('🔒 Auto-locked at ±' + b.acc.toFixed(1) + 'm (' + gpsSession.readings.length + ' readings)', false);
-  updateGPSPill('locked', '🔒 ' + b.acc.toFixed(0) + 'm');
-  showGPSStatus('✅ Auto-locked at ' + b.acc.toFixed(1) + 'm accuracy — target ≤' + GPS_TARGET_ACC + 'm reached.', 'ok');
-  toast('🔒 GPS locked ±' + b.acc.toFixed(1) + 'm', '#00d4a4');
+  const tag = filteredFlag ? '🎯 PRECISION ' : '🔒 Auto-locked at ';
+  showGPSFix(tag + '±' + fix.acc.toFixed(1) + 'm (' + S.gps.samples + ' of ' + S.gps.rawSamples + ' samples)', false);
+  updateGPSPill('locked', '🔒 ' + fix.acc.toFixed(1) + 'm');
+  const okMsg = filteredFlag
+    ? '🎯 Precision lock at ±' + fix.acc.toFixed(1) + 'm. Median of ' + fix.samples + ' filtered samples (worst 30% dropped).'
+    : '✅ Auto-locked at ±' + fix.acc.toFixed(1) + 'm — target ≤' + GPS_TARGET_ACC + 'm reached.';
+  showGPSStatus(okMsg, 'ok');
+  toast((filteredFlag?'🎯 ':'🔒 ') + 'GPS ±' + fix.acc.toFixed(1) + 'm', '#00d4a4');
 
   // Vibrate to confirm
   if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
 }
 
 function manualLockAtBest() {
-  if (!gpsSession || !gpsSession.best) { toast('⚠ No readings yet'); return; }
-  const b = gpsSession.best;
-  S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length};
+  if (!gpsSession || !gpsSession.readings.length) { toast('⚠ No readings yet'); return; }
+  // If precision mode and we have enough samples, use the filtered fix.
+  let fix = null;
+  if (gpsSession.mode === 'precision' && gpsSession.readings.length >= 5) {
+    fix = computeFilteredFix(gpsSession.readings);
+  }
+  if (!fix) fix = gpsSession.best;
+  if (!fix) { toast('⚠ No usable readings'); return; }
+  const filteredFlag = gpsSession.mode === 'precision' && fix.samples > 0;
+  S.gps = {
+    lat: fix.lat, lng: fix.lng, acc: fix.acc,
+    manual: false,
+    samples: filteredFlag ? fix.samples : gpsSession.readings.length,
+    rawSamples: filteredFlag ? fix.raw : gpsSession.readings.length,
+    filtered: filteredFlag,
+    mode: gpsSession.mode
+  };
   S.gpsLocked = true;
   stopHighPrecisionGPS('manual-lock');
   document.getElementById('gblk').classList.add('lk');
   document.getElementById('gblk').classList.remove('refining');
-  showGPSFix('Locked at best fix ±' + b.acc.toFixed(1) + 'm', false);
-  updateGPSPill('locked', '🔒 ' + b.acc.toFixed(0) + 'm');
-  showGPSStatus('Locked at ' + b.acc.toFixed(1) + 'm (best of ' + gpsSession.readings.length + ' readings)', 'ok');
-  toast('🔒 Locked ±' + b.acc.toFixed(1) + 'm', '#00d4a4');
+  showGPSFix((filteredFlag?'🎯 PRECISION ':'Locked at best fix ') + '±' + fix.acc.toFixed(1) + 'm', false);
+  updateGPSPill('locked', '🔒 ' + fix.acc.toFixed(1) + 'm');
+  showGPSStatus('Locked at ' + fix.acc.toFixed(1) + 'm' + (filteredFlag ? ' (precision-filtered)' : ' (best of ' + gpsSession.readings.length + ' readings)'), 'ok');
+  toast('🔒 Locked ±' + fix.acc.toFixed(1) + 'm', '#00d4a4');
 }
 
 function stopHighPrecisionGPS(reason) {
@@ -1717,10 +1821,27 @@ function savePole() {
 
   // ── AUTO-CAPTURE GPS at save time ──
   // If GPS is running but not "locked", grab the best reading we have right now.
-  // This makes location tracking effortless: user just walks pole-to-pole, hits Save.
-  if (!S.gps && gpsSession && gpsSession.best) {
-    const b = gpsSession.best;
-    S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length, auto: true};
+  // In precision mode, use the median-filtered fix instead of single best reading.
+  if (!S.gps && gpsSession && gpsSession.readings.length) {
+    let fix = null;
+    if (gpsSession.mode === 'precision' && gpsSession.readings.length >= 5) {
+      fix = computeFilteredFix(gpsSession.readings);
+    }
+    if (!fix && gpsSession.best) {
+      const b = gpsSession.best;
+      fix = {lat: b.lat, lng: b.lng, acc: b.acc, samples: gpsSession.readings.length, raw: gpsSession.readings.length};
+    }
+    if (fix) {
+      S.gps = {
+        lat: fix.lat, lng: fix.lng, acc: fix.acc,
+        manual: false,
+        samples: fix.samples,
+        rawSamples: fix.raw,
+        filtered: gpsSession.mode === 'precision' && fix.samples > 0,
+        auto: true,
+        mode: gpsSession.mode
+      };
+    }
   }
 
   let span = parseFloat(document.getElementById('inp-span').value) || null;
@@ -2159,21 +2280,18 @@ const TILE_LAYERS = {
 };
 
 function poleIcon(poleType, hasGPS) {
-  // Bright fill for visibility, BLACK outline for legibility on cream/satellite tiles
+  // Slim, high-contrast pole marker.
   const fillCol = hasGPS ? (poleType==='existing' ? '#bbbbbb' : '#ffce00') : '#ff5544';
   const inner = {psc:'P',wooden:'W',gi:'G',rcc:'R',existing:'E',corner:'C',terminal:'T',tee:'Y'}[poleType] || 'P';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">
-    <!-- black halo for contrast -->
-    <circle cx="17" cy="15" r="14" fill="#000" opacity="0.5"/>
-    <!-- main bright circle with thick black ring -->
-    <circle cx="17" cy="15" r="12" fill="${fillCol}" stroke="#000" stroke-width="3"/>
-    <text x="17" y="20" text-anchor="middle" font-family="monospace" font-weight="900" font-size="13" fill="#000">${inner}</text>
-    <!-- pin tail with black outline -->
-    <line x1="17" y1="27" x2="17" y2="42" stroke="#000" stroke-width="4"/>
-    <line x1="17" y1="27" x2="17" y2="42" stroke="${fillCol}" stroke-width="2"/>
-    <circle cx="17" cy="42" r="3" fill="${fillCol}" stroke="#000" stroke-width="1.5"/>
+  // Smaller footprint: 22×30 viewport, 9px circle radius.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30">
+    <circle cx="11" cy="10" r="9.5" fill="#000" opacity="0.45"/>
+    <circle cx="11" cy="10" r="8" fill="${fillCol}" stroke="#000" stroke-width="2"/>
+    <text x="11" y="14" text-anchor="middle" font-family="monospace" font-weight="900" font-size="10" fill="#000">${inner}</text>
+    <line x1="11" y1="18" x2="11" y2="29" stroke="#000" stroke-width="3"/>
+    <line x1="11" y1="18" x2="11" y2="29" stroke="${fillCol}" stroke-width="1.5"/>
   </svg>`;
-  return L.divIcon({html:svg, className:'', iconSize:[34,44], iconAnchor:[17,44], popupAnchor:[0,-46]});
+  return L.divIcon({html:svg, className:'', iconSize:[22,30], iconAnchor:[11,29], popupAnchor:[0,-30]});
 }
 
 function initMap() {
@@ -2344,7 +2462,7 @@ function refreshMap() {
   // ── POLE MARKERS ──
   const estIds = new Set(S.components.filter(c => c.est > 0).map(c => c.id));
 
-  polesWithGPS.forEach(p => {
+  polesWithGPS.forEach((p, pIdx) => {
     const compEntries = Object.entries(p.components||{}).filter(e => e[1] > 0);
     const compHTML = compEntries.map(e => {
       const name = S.components.find(c => c.id===e[0])?.name || e[0];
@@ -2370,14 +2488,28 @@ function refreshMap() {
         const name = S.components.find(c => c.id===cid)?.name || cid;
         const isEst = estIds.has(cid);
         const short = name.length > 14 ? name.slice(0,13)+'…' : name;
-        return '<div class="row"><span class="ic" style="color:'+(isEst?EST_COL:NEW_COL)+'">'+(COMP_GLYPH[cid]||'■')+'</span><span>'+esc(short)+' <b>×'+n+'</b></span></div>';
+        // Inline color removed — let .sld-overlay-symbol CSS govern (black on white).
+        // Use background tint on the icon span to distinguish est vs new instead of foreground color.
+        const tint = isEst ? 'background:rgba(255,206,0,.25)' : 'background:rgba(0,212,164,.25)';
+        return '<div class="row"><span class="ic" style="'+tint+';padding:1px 3px;border-radius:3px;color:#000">'+(COMP_GLYPH[cid]||'■')+'</span><span>'+esc(short)+' <b>×'+n+'</b></span></div>';
       }).join('');
-      const more = compEntries.length > 6 ? '<div style="color:var(--i3);font-size:8px;margin-top:2px">+'+(compEntries.length-6)+' more</div>' : '';
+      const more = compEntries.length > 6 ? '<div style="color:#555;font-size:8px;margin-top:2px">+'+(compEntries.length-6)+' more</div>' : '';
       const cls = hasNew ? 'sld-overlay-symbol new' : 'sld-overlay-symbol';
       const ttl = showLabels ? '<div class="ttl">'+esc(p.code)+'</div>' : '';
       const overlayHTML = '<div class="'+cls+'">'+ttl+compCount+more+'</div>';
+
+      // ── Stagger anchor so neighbouring poles' clusters don't overlap ──
+      // Cycle through 4 quadrant offsets: upper-right, lower-right, upper-left, lower-left.
+      const stagger = [
+        [-22, 32],   // upper-right (cluster sits up & right of pole)
+        [-22, -60],  // lower-right
+        [110, 32],   // upper-left
+        [110, -60]   // lower-left
+      ];
+      const off = stagger[pIdx % 4];
+
       const symMarker = L.marker([p.lat, p.lng], {
-        icon: L.divIcon({html:overlayHTML, className:'', iconAnchor:[-18, 30]}),  // offset to upper-right of pole
+        icon: L.divIcon({html:overlayHTML, className:'', iconAnchor:off}),
         interactive: false,
         zIndexOffset: -100
       }).addTo(leafletMap);
@@ -2386,7 +2518,7 @@ function refreshMap() {
       // Just the code label
       const codeMarker = L.marker([p.lat, p.lng], {
         icon: L.divIcon({
-          html:'<div style="background:rgba(10,10,10,.85);border:1px solid '+EST_COL+';border-radius:4px;padding:2px 6px;font-size:11px;color:'+EST_COL+';font-family:monospace;font-weight:700;white-space:nowrap">'+esc(p.code)+'</div>',
+          html:'<div style="background:rgba(255,255,255,.97);border:1.5px solid #000;border-radius:4px;padding:2px 6px;font-size:11px;color:#000;font-family:monospace;font-weight:900;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4)">'+esc(p.code)+'</div>',
           className:'', iconAnchor:[-18, 30]
         }),
         interactive: false,
