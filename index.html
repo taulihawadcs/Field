@@ -258,33 +258,34 @@ td b{color:var(--acc);font-family:var(--D)}
 
 /* ── SLD-on-MAP overlay symbols ── */
 .sld-overlay-symbol{
-  background:rgba(0,0,0,.92);
-  border:2px solid var(--acc);
+  background:rgba(255,255,255,.97);
+  border:2px solid #000;
   border-radius:8px;
   padding:6px 8px;
   font-family:var(--M);
   font-size:9px;
-  color:#ffffff;
+  color:#000000;
+  font-weight:700;
   white-space:nowrap;
-  box-shadow:0 2px 12px rgba(0,0,0,.75);
-  backdrop-filter:blur(2px);
+  box-shadow:0 2px 12px rgba(0,0,0,.5);
   line-height:1.4;
 }
 .sld-overlay-symbol.new{
-  border-color:var(--grn);color:#ffffff;
+  border-color:#00855f;
 }
 .sld-overlay-symbol .ttl{
   font-family:var(--D);font-size:10px;
-  color:var(--acc);
-  border-bottom:1px solid rgba(255,206,0,.4);
+  color:#000;
+  font-weight:900;
+  border-bottom:1.5px solid #000;
   padding-bottom:3px;margin-bottom:3px;
 }
 .sld-overlay-symbol.new .ttl{
-  color:var(--grn);
-  border-bottom-color:rgba(0,212,164,.4);
+  color:#00855f;
+  border-bottom-color:#00855f;
 }
-.sld-overlay-symbol .row{display:flex;gap:4px;align-items:center;color:#ffffff}
-.sld-overlay-symbol .row .ic{font-size:11px;line-height:1}
+.sld-overlay-symbol .row{display:flex;gap:4px;align-items:center;color:#000000}
+.sld-overlay-symbol .row .ic{font-size:11px;line-height:1;color:#000}
 
 /* Sub-tab pill switcher inside SLD/MAP page */
 .sld-tabs{display:flex;gap:0;margin-bottom:12px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
@@ -2330,7 +2331,7 @@ function refreshMap() {
         const lbl = [spanTxt, cableTxt].filter(Boolean).join(' · ');
         const lblMarker = L.marker([midLat,midLng], {
           icon: L.divIcon({
-            html: '<div style="background:rgba(0,0,0,.92);border:1.5px solid '+NEW_COL+';border-radius:4px;padding:3px 7px;font-size:10px;color:#ffffff;white-space:nowrap;font-family:monospace;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.6)">'+esc(lbl)+'</div>',
+            html: '<div style="background:rgba(255,255,255,.97);border:1.5px solid #000;border-radius:4px;padding:3px 7px;font-size:10px;color:#000;white-space:nowrap;font-family:monospace;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+esc(lbl)+'</div>',
             className:'', iconAnchor:[30,10]
           }),
           interactive: false
