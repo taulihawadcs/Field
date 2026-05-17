@@ -1,0 +1,2593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
+<title>FieldGrid Pro v6</title>
+<link rel="manifest" href="data:application/json;charset=utf-8,{%22name%22:%22FieldGrid%20Pro%22,%22short_name%22:%22FieldGrid%22,%22start_url%22:%22./%22,%22display%22:%22standalone%22,%22background_color%22:%22%230a0a0a%22,%22theme_color%22:%22%230a0a0a%22}">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0a0a0a;--panel:#161616;--p2:#1f1f1f;--line:#2a2a2a;
+  --ink:#f5f5f0;--i2:#a0a098;--i3:#5c5c54;
+  --acc:#ffce00;--grn:#00d4a4;--warn:#ff5544;--pur:#a78bfa;
+  --r:10px;
+  --D:'Archivo Black',sans-serif;
+  --M:'JetBrains Mono',monospace;
+  --touch:48px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+html,body{height:100%;background:var(--bg);color:var(--ink);font-family:var(--M);font-size:15px;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+body{display:flex;flex-direction:column;height:100dvh;height:-webkit-fill-available}
+
+header{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));background:var(--panel);border-bottom:2px solid var(--acc);min-height:var(--touch)}
+.logo{font-family:var(--D);font-size:18px;color:var(--acc);white-space:nowrap}
+.logo::before{content:"⚡ "}
+#proj-sel{background:var(--p2);border:1px solid var(--line);color:var(--ink);font-family:var(--M);font-size:12px;padding:8px 10px;border-radius:6px;flex:1;min-width:0;max-width:180px;height:var(--touch);-webkit-appearance:none}
+#gps-pill{margin-left:auto;font-size:11px;padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--p2);color:var(--i2);white-space:nowrap;min-height:var(--touch);display:flex;align-items:center;cursor:pointer;user-select:none}
+#gps-pill.live{color:var(--grn);border-color:var(--grn);animation:gps-pulse 2s infinite}
+#gps-pill.locked{color:#000;background:var(--grn);border-color:var(--grn);animation:none;font-weight:700}
+#gps-pill.refining{color:var(--acc);border-color:var(--acc)}
+@keyframes gps-pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,212,164,.3)}50%{box-shadow:0 0 0 6px rgba(0,212,164,0)}}
+
+/* Offline indicator */
+#offline-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--grn);
+  box-shadow:0 0 6px var(--grn);
+  transition:background .3s,box-shadow .3s;
+}
+#offline-dot.off{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+#offline-dot.cached{background:var(--acc);box-shadow:0 0 6px var(--acc)}
+
+nav{flex-shrink:0;display:flex;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{flex:1;min-width:60px;background:none;border:none;color:var(--i3);padding:10px 4px;font-family:var(--M);font-weight:700;font-size:10px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;min-height:var(--touch);transition:color .15s,border-color .15s,background .15s;will-change:color}
+nav button.on{color:var(--acc);border-bottom-color:var(--acc);background:var(--p2)}
+nav button span{display:block;font-family:var(--D);font-size:17px;line-height:1;margin-bottom:2px}
+
+main{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+
+.pg{display:none;padding:16px 16px 100px}
+.pg.on{display:block;animation:pgIn .18s ease forwards}
+@keyframes pgIn{from{opacity:0}to{opacity:1}}
+.pg h2{font-family:var(--D);font-size:22px;margin-bottom:4px}
+.sub{color:var(--i2);font-size:12px;margin-bottom:16px;line-height:1.6}
+
+.lbl{font-size:10px;letter-spacing:1.5px;color:var(--i3);text-transform:uppercase;margin-bottom:6px;margin-top:14px;font-weight:700;display:block}
+input,select,textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;color:var(--ink);font-family:var(--M);font-size:14px;outline:none;-webkit-appearance:none;appearance:none;min-height:var(--touch);transition:border-color .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--i2) 50%),linear-gradient(135deg,var(--i2) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px;background-repeat:no-repeat;padding-right:34px}
+textarea{resize:vertical;min-height:60px}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:13px 18px;border-radius:var(--r);border:none;font-family:var(--M);font-weight:700;font-size:13px;cursor:pointer;min-height:var(--touch);transition:opacity .1s,transform .1s;-webkit-user-select:none;user-select:none;position:relative;overflow:hidden}
+.btn:active{opacity:.72;transform:scale(.97)}
+.btn::after{content:'';position:absolute;inset:0;background:rgba(255,255,255,.15);opacity:0;border-radius:inherit;transition:opacity .2s}
+.btn:active::after{opacity:1}
+.bA{background:var(--acc);color:#000}
+.bG{background:var(--grn);color:#000}
+.bO{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.bP{background:var(--pur);color:#000}
+.bW{color:var(--warn);border:1px solid var(--warn);background:none}
+.full{width:100%}
+.sm{padding:9px 13px;font-size:12px;min-height:40px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+.upz{background:var(--panel);border:2px dashed var(--line);border-radius:var(--r);padding:28px 16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;-webkit-user-select:none;user-select:none}
+.upz:active{border-color:var(--acc);background:rgba(255,206,0,.04)}
+.upz .ico{font-size:36px;margin-bottom:8px}
+.upz .ttl{font-family:var(--D);font-size:15px;margin-bottom:4px}
+.upz .dsc{font-size:11px;color:var(--i2);line-height:1.6}
+
+.er{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.er input{flex:1;background:transparent;border:none;color:var(--ink);font-family:var(--M);font-size:13px;padding:4px;outline:none;min-width:0;min-height:36px}
+.er .qty{flex:0 0 56px;text-align:center;background:var(--p2);border-radius:5px;padding:4px;font-size:13px;min-height:36px}
+.er .unt{flex:0 0 50px;background:var(--p2);border-radius:5px;padding:4px;font-size:12px;text-align:center;min-height:36px}
+.er .x{background:none;border:none;color:var(--i3);font-size:20px;cursor:pointer;padding:4px 8px;flex-shrink:0;min-width:var(--touch);min-height:var(--touch);display:flex;align-items:center;justify-content:center;border-radius:6px;transition:color .15s,background .15s}
+.er .x:active{color:var(--warn);background:rgba(255,85,68,.1)}
+
+.cc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px;transition:border-color .2s}
+.cc .nm{flex:1;font-size:13px;line-height:1.3}
+.cc .nm .mt{font-size:11px;color:var(--i3);margin-top:2px}
+.cc .ctrl{display:flex;align-items:center;background:var(--p2);border-radius:7px;padding:3px;gap:2px}
+.cc button{width:var(--touch);height:var(--touch);border:none;background:none;color:var(--i2);font-size:20px;font-weight:700;cursor:pointer;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s}
+.cc button:active{background:rgba(255,206,0,.15);color:var(--acc)}
+.cc .vl{min-width:38px;text-align:center;font-family:var(--D);font-size:17px}
+.cc.hv{border-color:var(--acc)}
+.cc.hv .vl{color:var(--acc)}
+.tbadge{display:inline-block;font-size:9px;padding:2px 5px;border-radius:3px;margin-left:4px;font-weight:700}
+.tbadge.est{background:rgba(255,206,0,.15);color:var(--acc)}
+.tbadge.new{background:rgba(0,212,164,.15);color:var(--grn)}
+
+.pr{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+.pr.nc{border-left-color:var(--i3);border-left-style:dashed}
+.pr .cd{font-family:var(--D);font-size:14px;color:var(--acc);min-width:46px}
+.pr .inf{flex:1;font-size:11px;color:var(--i2);line-height:1.5}
+.pr .inf b{color:var(--ink)}
+.pr .pra{display:flex;gap:5px;flex-shrink:0}
+.pr .dx{background:none;border:1px solid var(--line);color:var(--i3);cursor:pointer;font-size:16px;padding:4px 10px;border-radius:6px;min-width:var(--touch);min-height:var(--touch);display:flex;align-items:center;justify-content:center;transition:color .15s,border-color .15s}
+.pr .dx:active{color:var(--warn);border-color:var(--warn)}
+.ph-btn{background:none;border:1px solid var(--line);border-radius:6px;color:var(--i2);cursor:pointer;font-size:14px;min-width:var(--touch);min-height:var(--touch);display:flex;align-items:center;justify-content:center;transition:color .15s,border-color .15s}
+.ph-btn.has{color:var(--grn);border-color:var(--grn)}
+
+/* ── HIGH-PRECISION GPS BLOCK ───────────────────────── */
+.gblk{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:14px;transition:border-color .3s}
+.gblk.lk{border-color:var(--grn);box-shadow:0 0 0 1px var(--grn),0 0 20px rgba(0,212,164,.15)}
+.gblk.refining{border-color:var(--acc)}
+
+.gps-precision-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:8px;
+}
+.gps-precision-title{
+  font-family:var(--D);font-size:13px;color:var(--acc);
+}
+.gps-precision-target{
+  font-size:10px;color:var(--i3);
+  background:var(--p2);padding:3px 8px;border-radius:99px;
+  border:1px solid var(--line);
+}
+.gco{font-family:var(--D);font-size:15px;color:var(--grn);margin:6px 0;word-break:break-all}
+.gco.em{color:var(--i3);font-size:13px;font-family:var(--M)}
+
+/* Live accuracy display */
+.acc-display{
+  display:flex;align-items:center;gap:12px;
+  background:var(--p2);border-radius:8px;padding:10px 12px;
+  margin:8px 0;
+}
+.acc-big{
+  font-family:var(--D);font-size:24px;color:var(--ink);
+  min-width:70px;text-align:center;
+  transition:color .3s;
+}
+.acc-big.excellent{color:var(--grn)}
+.acc-big.good{color:var(--acc)}
+.acc-big.poor{color:var(--warn)}
+.acc-meta{flex:1;font-size:10px;color:var(--i2);line-height:1.5}
+.acc-meta b{color:var(--ink);font-size:11px}
+
+.gbar{height:6px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden;position:relative}
+.gbf{height:100%;background:var(--grn);width:0;transition:width .6s cubic-bezier(.4,0,.2,1),background .4s;border-radius:3px}
+.gbf.w{background:var(--acc)}
+.gbf.b{background:var(--warn)}
+/* Target line at 8m */
+.gbar::after{
+  content:'';position:absolute;top:-2px;bottom:-2px;
+  left:85%;width:2px;background:var(--grn);
+  box-shadow:0 0 4px var(--grn);
+}
+
+.gps-stats-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:6px;
+  margin-top:10px;
+}
+.gps-stat{
+  background:var(--p2);border-radius:6px;padding:6px 8px;
+  text-align:center;
+}
+.gps-stat .v{font-family:var(--D);font-size:14px;color:var(--ink)}
+.gps-stat .l{font-size:9px;color:var(--i3);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+
+.gps-req-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:10px;padding:14px;background:rgba(0,212,164,.1);border:1px solid var(--grn);border-radius:var(--r);color:var(--grn);font-family:var(--M);font-weight:700;font-size:13px;cursor:pointer;transition:background .15s}
+.gps-req-btn:active{background:rgba(0,212,164,.2)}
+.gps-req-btn.active{
+  background:rgba(255,206,0,.12);border-color:var(--acc);color:var(--acc);
+}
+
+.cp{background:var(--p2);border:1px solid var(--acc);border-left:4px solid var(--acc);border-radius:var(--r);padding:14px;margin-bottom:14px;display:none}
+.cp.sh{display:block}
+.cp .ct{font-family:var(--D);font-size:13px;color:var(--acc);margin-bottom:6px}
+.cp .ci{font-size:11px;color:var(--i2);margin-bottom:10px}
+.cp .yn{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.photo-strip{display:flex;gap:10px;overflow-x:auto;padding:8px 0;min-height:40px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.photo-strip::-webkit-scrollbar{display:none}
+.photo-thumb{flex-shrink:0;width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;transition:border-color .15s,transform .15s}
+.photo-thumb:active{transform:scale(.94)}
+.photo-thumb.pend{border-color:var(--grn);border-width:2px}
+
+.sld-wrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:auto;max-height:60vh;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.sld-ctrl{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.sld-ctrl select{flex:1;min-width:80px;padding:10px 12px;font-size:12px}
+
+.sg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:18px}
+.st{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.st .n{font-family:var(--D);font-size:26px;color:var(--acc);line-height:1}
+.st .l{font-size:10px;color:var(--i3);margin-top:4px;text-transform:uppercase;letter-spacing:1px}
+
+table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}
+th{background:var(--p2);color:var(--i3);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700}
+td b{color:var(--acc);font-family:var(--D)}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700}
+.ok{background:rgba(0,212,164,.15);color:var(--grn)}
+.ov{background:rgba(255,85,68,.15);color:var(--warn)}
+.un{background:rgba(255,206,0,.15);color:var(--acc)}
+.empty{padding:32px 16px;text-align:center;color:var(--i3);font-size:12px}
+
+.aibox{background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.aibox h3{font-family:var(--D);font-size:14px;color:var(--pur);margin-bottom:10px}
+.ais{font-size:12px;margin-top:8px;padding:6px 10px;border-radius:5px;background:var(--p2)}
+.ais.ok{color:var(--grn)}.ais.er{color:var(--warn)}.ais.ld{color:var(--i2)}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.pill{background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);color:var(--pur);font-size:11px;padding:6px 10px;border-radius:99px;cursor:pointer;min-height:36px;display:flex;align-items:center;transition:background .15s}
+.pill:active{background:rgba(167,139,250,.25)}
+.air{margin-top:12px;background:var(--p2);border:1px solid rgba(167,139,250,.2);border-radius:var(--r);padding:12px;font-size:12px;line-height:1.8;color:var(--i2);white-space:pre-wrap;word-break:break-word;max-height:340px;overflow-y:auto;display:none;-webkit-overflow-scrolling:touch}
+.sts{border-left:3px solid var(--pur);border-radius:4px;padding:9px 12px;margin-top:10px;font-size:12px;color:var(--i2);display:none;background:var(--p2)}
+.sts.sh{display:block}
+
+.pjc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:6px;transition:border-color .15s}
+.pjc.cur{border-color:var(--acc)}
+.pjc .pn{flex:1;font-family:var(--D);font-size:14px}
+.pjc .pm{font-size:11px;color:var(--i3);margin-top:3px}
+
+.moverlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);animation:fadeIn .2s ease}
+.moverlay.hidden{display:none}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.mbox{background:var(--panel);border:2px solid var(--acc);border-radius:14px;padding:26px;max-width:380px;width:100%;animation:slideUp .2s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.mbox h2{font-family:var(--D);font-size:20px;color:var(--acc);margin-bottom:8px}
+.mbox p{font-size:12px;color:var(--i2);margin-bottom:16px;line-height:1.6}
+
+#toast{position:fixed;bottom:max(20px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%) translateY(20px);background:var(--acc);color:#000;padding:10px 18px;border-radius:99px;font-weight:700;font-size:12px;opacity:0;transition:opacity .2s,transform .2s;z-index:900;pointer-events:none;max-width:90vw;text-align:center}
+#toast.sh{opacity:1;transform:translateX(-50%) translateY(0)}
+
+#inp-code-display{background:var(--p2);border:1px solid var(--acc);border-radius:var(--r);padding:13px 14px;font-family:var(--M);font-size:16px;color:var(--acc);font-weight:700;letter-spacing:1px;min-height:var(--touch);display:flex;align-items:center}
+
+/* ── MAP ── */
+#pole-map{width:100%;height:62vh;min-height:380px;border-radius:var(--r);border:1px solid var(--line);background:#0d1520;z-index:0}
+.map-wrap{position:relative;margin-bottom:12px}
+.map-wrap .map-overlay{position:absolute;top:8px;left:8px;z-index:400;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.map-badge{background:rgba(10,10,10,.82);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:10px;color:var(--i2);pointer-events:auto;backdrop-filter:blur(4px)}
+.map-badge b{color:var(--acc)}
+
+.leaflet-popup-content-wrapper{background:#161616!important;border:1px solid var(--acc)!important;color:#f5f5f0!important;border-radius:8px!important;font-family:'JetBrains Mono',monospace!important;font-size:12px!important}
+.leaflet-popup-tip{background:#161616!important}
+.leaflet-popup-close-button{color:#a0a098!important}
+.pole-popup-code{font-weight:700;color:#ffce00;font-size:14px;margin-bottom:4px}
+.pole-popup-row{font-size:11px;color:#a0a098;line-height:1.6}
+.pole-popup-comp{display:inline-block;background:rgba(0,212,164,.12);color:#00d4a4;border-radius:3px;padding:1px 5px;margin:1px;font-size:10px}
+
+/* ── SLD-on-MAP overlay symbols ── */
+.sld-overlay-symbol{
+  background:rgba(10,10,10,.92);
+  border:1.5px solid var(--acc);
+  border-radius:8px;
+  padding:6px 8px;
+  font-family:var(--M);
+  font-size:9px;
+  color:var(--acc);
+  white-space:nowrap;
+  box-shadow:0 2px 10px rgba(0,0,0,.6);
+  backdrop-filter:blur(2px);
+  line-height:1.4;
+}
+.sld-overlay-symbol.new{
+  border-color:var(--grn);color:var(--grn);
+}
+.sld-overlay-symbol .ttl{
+  font-family:var(--D);font-size:10px;
+  border-bottom:1px solid rgba(255,206,0,.3);
+  padding-bottom:3px;margin-bottom:3px;
+}
+.sld-overlay-symbol.new .ttl{border-bottom-color:rgba(0,212,164,.3)}
+.sld-overlay-symbol .row{display:flex;gap:4px;align-items:center}
+.sld-overlay-symbol .row .ic{font-size:11px;line-height:1}
+
+/* Sub-tab pill switcher inside SLD/MAP page */
+.sld-tabs{display:flex;gap:0;margin-bottom:12px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.sld-tab{flex:1;padding:10px 8px;background:var(--panel);border:none;color:var(--i3);font-family:var(--M);font-weight:700;font-size:11px;cursor:pointer;border-right:1px solid var(--line);transition:background .15s,color .15s}
+.sld-tab:last-child{border-right:none}
+.sld-tab.on{background:var(--p2);color:var(--acc)}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">FieldGrid</div>
+  <select id="proj-sel" onchange="switchProject(this.value)"></select>
+  <div id="offline-dot" title="Network status"></div>
+  <div id="gps-pill">GPS off</div>
+</header>
+
+<nav id="main-nav">
+  <button class="on" data-pg="setup"><span>1</span>SETUP</button>
+  <button data-pg="record"><span>2</span>RECORD</button>
+  <button data-pg="sld"><span>3</span>SLD</button>
+  <button data-pg="report"><span>4</span>REPORT</button>
+  <button data-pg="ai"><span>✦</span>AI</button>
+</nav>
+
+<main id="main-content">
+
+<!-- ══ PAGE 1: SETUP ══════════════════════════════ -->
+<section class="pg on" id="pg-setup">
+  <h2>Setup</h2>
+  <p class="sub">Name project · Upload SDS estimate · Manage components &amp; locations</p>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <span style="font-family:var(--D);font-size:14px">Projects</span>
+    <button class="btn bO sm" onclick="toggleNewProj()">＋ New Project</button>
+  </div>
+  <div id="new-proj-form" style="display:none;flex-direction:column;gap:8px;background:var(--p2);border:1px solid var(--acc);border-radius:var(--r);padding:14px;margin-bottom:12px">
+    <div style="font-family:var(--D);font-size:13px;color:var(--acc)">New Project</div>
+    <input id="new-proj-name" placeholder="e.g. Rampur LT Extension 2025" autocomplete="off" style="margin:0">
+    <div style="display:flex;gap:8px">
+      <button class="btn bA sm" style="flex:1" onclick="createProject()">Create</button>
+      <button class="btn bO sm" onclick="toggleNewProj()">Cancel</button>
+    </div>
+  </div>
+  <div id="pj-list"></div>
+
+  <!-- Offline cache controls -->
+  <div style="background:var(--p2);border:1px solid var(--line);border-radius:var(--r);padding:12px;margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <span style="font-family:var(--D);font-size:13px;color:var(--acc)">📡 Offline Mode</span>
+      <span id="sw-status" style="font-size:10px;color:var(--i3)">checking…</span>
+    </div>
+    <div style="font-size:11px;color:var(--i2);line-height:1.6;margin-bottom:10px">
+      The Record page works offline once cached. Go outdoors with no signal — your survey continues.
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn bO sm" id="cache-now-btn">⬇ Cache assets now</button>
+      <button class="btn bW sm" id="clear-cache-btn">🗑 Clear cache</button>
+    </div>
+  </div>
+
+  <div class="upz" id="upz" onclick="document.getElementById('fin').click()" style="margin-top:18px">
+    <div class="ico" id="upz-ico">📂</div>
+    <div class="ttl" id="upz-ttl">Tap to upload estimate file</div>
+    <div class="dsc" id="upz-dsc">Excel (.xlsx) · <b>Row 6</b> = Works At [locations] · below <b>Description</b> header = components</div>
+  </div>
+  <input type="file" id="fin" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleUpload(this)">
+  <div class="sts" id="parse-st"></div>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <button class="btn bO sm" onclick="dlTemplate()">⬇ Template</button>
+    <button class="btn bW sm" id="reset-proj-btn">↺ Reset project</button>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:20px;margin-bottom:10px">
+    <span style="font-family:var(--D);font-size:14px">📦 Components <span id="cc-cnt" style="background:var(--acc);color:#000;font-size:10px;padding:1px 7px;border-radius:99px;margin-left:5px">0</span></span>
+    <button class="btn bO sm" onclick="addComp()">＋ Add</button>
+  </div>
+  <div id="comp-list"></div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:10px">
+    <span style="font-family:var(--D);font-size:14px">📍 Locations <span id="lc-cnt" style="background:var(--acc);color:#000;font-size:10px;padding:1px 7px;border-radius:99px;margin-left:5px">0</span></span>
+    <button class="btn bO sm" onclick="addLoc()">＋ Add</button>
+  </div>
+  <div id="loc-list"></div>
+
+  <button class="btn bA full" style="margin-top:20px" onclick="goPage('record')">Continue to Record →</button>
+</section>
+
+<!-- ══ PAGE 2: RECORD ═════════════════════════════ -->
+<section class="pg" id="pg-record">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <h2 style="margin:0">Record Pole</h2>
+    <button class="btn bW sm" id="rec-reset-btn" style="gap:5px;padding:8px 13px;font-size:12px"><span style="font-size:16px">↺</span> Reset Session</button>
+  </div>
+  <p class="sub" id="rec-proj" style="color:var(--acc);margin-bottom:8px"></p>
+
+  <div class="cp" id="cable-prompt">
+    <div class="ct">🔌 Connect cable from previous pole?</div>
+    <div class="ci" id="cp-info"></div>
+    <div class="yn">
+      <button class="btn bG" onclick="setCable(true)">✅ Yes, connected</button>
+      <button class="btn bO" onclick="setCable(false)">⏭ No / standalone</button>
+    </div>
+  </div>
+
+  <!-- ── HIGH-PRECISION GPS BLOCK ── -->
+  <div class="gblk" id="gblk">
+    <div class="gps-precision-header">
+      <div class="gps-precision-title">📍 High-Precision GPS</div>
+      <div class="gps-precision-target">target ≤ <b style="color:var(--grn)">8m</b></div>
+    </div>
+
+    <!-- Auto GPS section -->
+    <div id="gps-auto-section">
+      <div style="background:rgba(0,212,164,0.06);border-left:3px solid var(--grn);padding:6px 10px;margin-bottom:10px;font-size:11px;color:var(--i2);line-height:1.4">
+        💡 <b>GPS runs automatically</b> while you're on this page. Just walk to the next pole and tap <b>Save Pole</b> — the best fix is captured for you. Auto-lock fires at ≤8m.
+      </div>
+      <div class="acc-display">
+        <div class="acc-big" id="acc-big">—</div>
+        <div class="acc-meta">
+          <div><b id="acc-status">GPS off</b></div>
+          <div id="acc-sub">Tap "Start Auto-Lock" to begin acquiring high-precision fix</div>
+        </div>
+      </div>
+      <div class="gco em" id="gco">No fix yet</div>
+      <div class="gbar"><div class="gbf" id="gbf"></div></div>
+
+      <div class="gps-stats-grid">
+        <div class="gps-stat"><div class="v" id="gs-readings">0</div><div class="l">readings</div></div>
+        <div class="gps-stat"><div class="v" id="gs-best">—</div><div class="l">best (m)</div></div>
+        <div class="gps-stat"><div class="v" id="gs-elapsed">0s</div><div class="l">elapsed</div></div>
+      </div>
+
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="btn gps-req-btn" id="gps-req-btn" style="flex:1;margin:0;padding:12px">▶ Start Auto-Lock</button>
+        <button class="btn bO sm" id="gps-manual-toggle-btn" style="min-height:48px;padding:6px 14px;font-size:11px">✎ Manual</button>
+      </div>
+
+      <div id="gps-status-box" style="display:none;margin-top:8px;background:var(--p2);border-radius:8px;padding:10px;font-size:11px;line-height:1.8;color:var(--i2)"></div>
+    </div>
+
+    <!-- Manual entry -->
+    <div id="gps-manual-section" style="display:none;margin-top:10px">
+      <div style="background:rgba(0,212,164,0.07);border:1px solid var(--grn);border-radius:8px;padding:10px;margin-bottom:10px">
+        <div style="font-family:var(--D);font-size:11px;color:var(--grn);margin-bottom:6px">✎ Manual Coordinate Entry</div>
+        <div style="font-size:11px;color:var(--i2);margin-bottom:8px">
+          From Google Maps: long-press → copy numbers at top.<br>
+          From handheld GPS: read coords directly.
+        </div>
+        <div class="g2" style="gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:10px;color:var(--i3);margin-bottom:4px">LATITUDE</div>
+            <input id="inp-lat" type="number" step="0.000001" placeholder="27.546231" inputmode="decimal" style="margin:0;min-height:42px">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--i3);margin-bottom:4px">LONGITUDE</div>
+            <input id="inp-lng" type="number" step="0.000001" placeholder="83.274512" inputmode="decimal" style="margin:0;min-height:42px">
+          </div>
+        </div>
+        <button class="btn bG full" id="set-manual-gps-btn" style="min-height:42px">✓ Set Coordinates</button>
+      </div>
+    </div>
+
+    <div id="gps-fix-display" style="display:none;margin-top:8px;background:rgba(0,212,164,0.06);border:1px solid var(--grn);border-radius:8px;padding:10px">
+      <div style="font-family:var(--D);font-size:11px;color:var(--grn);margin-bottom:4px">📍 Location Locked</div>
+      <div id="gps-fix-coords" style="font-family:var(--M);font-size:13px;color:var(--ink);font-weight:700"></div>
+      <div id="gps-fix-acc" style="font-size:10px;color:var(--i2);margin-top:2px"></div>
+    </div>
+  </div>
+
+  <div class="g2" style="margin-bottom:12px">
+    <div>
+      <span class="lbl" style="margin-top:0">Pole code (auto)</span>
+      <div id="inp-code-display">P1</div>
+    </div>
+    <div>
+      <span class="lbl" style="margin-top:0">Span (m)</span>
+      <input id="inp-span" placeholder="auto from GPS" type="number" step="0.1" inputmode="decimal" oninput="this.dataset.userTyped='1'">
+      <div id="inp-span-hint" style="font-size:10px;color:var(--i3);margin-top:3px;font-family:var(--M);min-height:14px">—</div>
+    </div>
+  </div>
+
+  <span class="lbl">Location / Area</span>
+  <select id="inp-loc"><option value="">— select location —</option></select>
+
+  <span class="lbl">Pole type</span>
+  <select id="inp-type">
+    <option value="psc">PSC (New)</option>
+    <option value="wooden">Wooden (New)</option>
+    <option value="gi">GI (New)</option>
+    <option value="rcc">RCC (New)</option>
+    <option value="existing">Existing</option>
+    <option value="corner">Corner</option>
+    <option value="terminal">Terminal</option>
+    <option value="tee">Tee-off</option>
+  </select>
+
+  <span class="lbl">Remarks</span>
+  <textarea id="inp-rem" placeholder="Notes, issues, observations…"></textarea>
+
+  <div style="margin-top:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="lbl" style="margin:0">📷 Photos for this pole</span>
+      <button class="btn bO sm" onclick="capturePhoto('pending')">📷 Add Photo</button>
+    </div>
+    <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" onchange="handlePhoto(this)">
+    <div id="cur-photos" class="photo-strip">
+      <span style="font-size:11px;color:var(--i3);align-self:center">No photos yet</span>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;margin-bottom:8px">
+    <span class="lbl" style="margin:0">Components at this pole</span>
+    <button class="btn bO sm" onclick="resetCtrs()">↻ Reset</button>
+  </div>
+  <div id="ctr-list"></div>
+
+  <button class="btn bG full" style="margin-top:14px;padding:16px;font-size:15px" onclick="savePole()">✅ Save Pole</button>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:20px;margin-bottom:10px">
+    <span style="font-family:var(--D);font-size:13px">Recorded poles</span>
+    <span id="pole-cnt" style="background:var(--acc);color:#000;font-size:10px;padding:2px 8px;border-radius:99px">0</span>
+  </div>
+  <div id="pole-list"></div>
+</section>
+
+<!-- ══ PAGE 3: SLD ════════════════════════════════ -->
+<section class="pg" id="pg-sld">
+  <h2>SLD &amp; Map</h2>
+  <p class="sub"><span style="color:var(--grn)">■ New</span> · <span style="color:var(--acc)">■ Estimated</span> · Real map + IEEE diagram · export PNG/PDF</p>
+
+  <div class="sld-tabs">
+    <button class="sld-tab on" id="tab-map-btn">🌐 Map + SLD</button>
+    <button class="sld-tab" id="tab-sld-btn">⚡ Pure SLD</button>
+    <button class="sld-tab" id="tab-both-btn">📄 PDF Export</button>
+  </div>
+
+  <!-- MAP VIEW (now with SLD overlay) -->
+  <div id="sld-map-panel">
+
+    <!-- SLD-on-Map toggles -->
+    <div style="background:var(--p2);border:1px solid var(--line);border-radius:var(--r);padding:10px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-family:var(--D);font-size:12px;color:var(--acc)">SLD Overlay</span>
+        <span style="font-size:10px;color:var(--i3)">draw SLD symbols on map</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
+          <input type="checkbox" id="overlay-symbols" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Symbols
+        </label>
+        <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
+          <input type="checkbox" id="overlay-cables" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--grn)"> Cables
+        </label>
+        <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
+          <input type="checkbox" id="overlay-labels" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--ink)"> Labels
+        </label>
+        <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
+          <input type="checkbox" id="overlay-spans" style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Spans
+        </label>
+      </div>
+    </div>
+
+    <div class="map-wrap" id="map-wrap">
+      <div id="pole-map"></div>
+      <div class="map-overlay">
+        <div class="map-badge" id="map-stats-badge">—</div>
+        <div class="map-badge" style="color:var(--i3);font-size:9px">Tap pole for details<br>SLD symbols overlay live</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      <span style="font-size:10px;color:var(--i3)">LAYER</span>
+      <button class="btn bO sm" id="tile-osm-btn" style="font-size:10px;min-height:34px;padding:5px 10px">🌍 Street</button>
+      <button class="btn bO sm" id="tile-sat-btn" style="font-size:10px;min-height:34px;padding:5px 10px">🛰 Satellite</button>
+      <button class="btn bO sm" id="tile-topo-btn" style="font-size:10px;min-height:34px;padding:5px 10px">⛰ Topo</button>
+      <button class="btn bA sm" id="map-fit-btn" style="font-size:10px;min-height:34px;padding:5px 10px">⊕ Fit All</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn bG" id="map-png-btn" style="flex:1;min-width:140px">⬇ Download Map+SLD as PNG</button>
+      <button class="btn bO sm" id="map-pdf-btn" style="font-size:11px">⬇ PDF</button>
+    </div>
+
+    <div id="no-gps-poles" style="display:none;background:rgba(255,206,0,.07);border:1px solid var(--acc);border-radius:8px;padding:10px;font-size:11px;color:var(--acc);margin-bottom:10px"></div>
+  </div>
+
+  <!-- SLD DIAGRAM -->
+  <div id="sld-diag-panel" style="display:none">
+    <div class="sld-ctrl">
+      <select id="sld-from"><option value="">From…</option></select>
+      <select id="sld-to"><option value="">To…</option></select>
+      <button class="btn bA sm" onclick="renderSLD()">Draw</button>
+      <button class="btn bO sm" onclick="exportSVG()">⬇ SVG</button>
+      <button class="btn bO sm" onclick="exportPDF()">⬇ PDF</button>
+    </div>
+    <div class="sld-wrap" id="sld-host">
+      <div style="padding:40px;text-align:center;color:var(--i3);font-size:12px">Press Draw to generate diagram</div>
+    </div>
+    <div id="sld-legend-wrap" style="margin-top:12px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
+  </div>
+
+  <!-- COMBINED PDF -->
+  <div id="sld-both-panel" style="display:none">
+    <div style="background:var(--p2);border:1px solid var(--line);border-radius:var(--r);padding:12px;margin-bottom:12px;font-size:12px;color:var(--i2);line-height:1.7">
+      <div style="font-family:var(--D);font-size:13px;color:var(--acc);margin-bottom:6px">📄 Combined PDF Export</div>
+      • Page 1: Map + SLD overlay (real terrain)<br>
+      • Page 2: IEEE Single Line Diagram<br>
+      • Page 3: Pole schedule with GPS
+    </div>
+    <button class="btn bA full" id="export-combined-pdf-btn" style="margin-top:10px;padding:14px;font-size:14px">⬇ Export Combined PDF</button>
+  </div>
+</section>
+
+<!-- ══ PAGE 4: REPORT ═════════════════════════════ -->
+<section class="pg" id="pg-report">
+  <h2>Report</h2>
+  <p class="sub">Bill of materials · estimated vs used · remaining · excess</p>
+  <div class="sg">
+    <div class="st"><div class="n" id="r-poles">0</div><div class="l">Poles</div></div>
+    <div class="st"><div class="n" id="r-span">0m</div><div class="l">Total span</div></div>
+    <div class="st"><div class="n" id="r-comps">0</div><div class="l">Components</div></div>
+    <div class="st"><div class="n" id="r-areas">0</div><div class="l">Areas</div></div>
+  </div>
+  <div style="font-family:var(--D);font-size:14px;margin-bottom:10px">Bill of Materials</div>
+  <div id="bom-tbl" style="overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
+  <div style="font-family:var(--D);font-size:14px;margin-bottom:10px;margin-top:6px">Pole Schedule</div>
+  <div id="sched-tbl" style="overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+    <button class="btn bA" onclick="expXLSX()">⬇ Export Excel</button>
+    <button class="btn bW sm" id="report-reset-btn">↺ Reset</button>
+  </div>
+</section>
+
+<!-- ══ PAGE 5: AI ══════════════════════════════════ -->
+<section class="pg" id="pg-ai">
+  <h2>AI Assistant</h2>
+  <p class="sub">Configure API keys · ask about your survey data</p>
+  <div class="aibox">
+    <h3>🔑 API Key Setup</h3>
+    <div style="margin-bottom:14px">
+      <span class="lbl" style="margin-top:0;color:var(--pur)">Groq API Key — Free at console.groq.com</span>
+      <div style="display:flex;gap:8px">
+        <input id="groq-key" type="password" placeholder="gsk_…" autocomplete="off" style="flex:1">
+        <button class="btn bP sm" onclick="testKey('groq')">Test</button>
+      </div>
+      <div id="groq-key-st" class="ais" style="display:none"></div>
+    </div>
+    <div>
+      <span class="lbl" style="margin-top:0;color:var(--pur)">Gemini API Key — Free at aistudio.google.com</span>
+      <div style="display:flex;gap:8px">
+        <input id="gemini-key" type="password" placeholder="AIza…" autocomplete="off" style="flex:1">
+        <button class="btn bP sm" onclick="testKey('gemini')">Test</button>
+      </div>
+      <div id="gemini-key-st" class="ais" style="display:none"></div>
+    </div>
+    <button class="btn bP full" style="margin-top:14px" onclick="saveKeys()">💾 Save Keys</button>
+    <div id="ai-key-summary" style="margin-top:10px;font-size:12px;color:var(--i3)"></div>
+  </div>
+  <div class="aibox">
+    <h3>💬 Ask AI</h3>
+    <span class="lbl" style="margin-top:0">Provider</span>
+    <select id="ai-provider">
+      <option value="groq">Groq — llama-3.3-70b-versatile</option>
+      <option value="gemini">Gemini — gemini-1.5-flash</option>
+    </select>
+    <div class="pills" style="margin-top:10px">
+      <span class="pill" onclick="setQ(this.textContent)">Summarise survey</span>
+      <span class="pill" onclick="setQ(this.textContent)">Check BoM vs estimates</span>
+      <span class="pill" onclick="setQ(this.textContent)">Poles with no GPS</span>
+      <span class="pill" onclick="setQ(this.textContent)">Total cable by type</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <textarea id="ai-q" rows="2" placeholder="Ask about your survey…" style="flex:1;min-height:50px"></textarea>
+      <button class="btn bP" onclick="askAI()" id="ai-btn" style="padding:0 16px;align-self:flex-end">▶</button>
+    </div>
+    <div class="air" id="ai-resp"></div>
+  </div>
+</section>
+</main>
+
+<!-- MODALS -->
+<div class="moverlay hidden" id="proj-modal">
+  <div class="mbox">
+    <h2>⚡ Start a Project</h2>
+    <p>Name your project before recording.</p>
+    <span class="lbl" style="margin-top:0">Project Name</span>
+    <input id="modal-proj-name" placeholder="e.g. Rampur LT Extension 2025" autocomplete="off" style="margin-bottom:14px">
+    <button class="btn bA full" onclick="createProjectFromModal()">Create &amp; Start →</button>
+  </div>
+</div>
+
+<div class="moverlay hidden" id="photo-modal" onclick="if(event.target===this)closePhotoModal()">
+  <div style="max-width:92vw;max-height:92vh;position:relative">
+    <img id="photo-modal-img" src="" style="max-width:88vw;max-height:76vh;border-radius:10px;display:block">
+    <div id="photo-modal-cap" style="text-align:center;color:#fff;margin-top:10px;font-size:12px;font-family:var(--M)"></div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:10px">
+      <button class="btn bO sm" onclick="downloadCurPhoto()">⬇ Download</button>
+      <button class="btn bW sm" onclick="closePhotoModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════
+// SERVICE WORKER — offline support for Record page
+// ══════════════════════════════════════════════════════
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) {
+    setSWStatus('not supported', 'warn');
+    return;
+  }
+  if (window.location.protocol === 'file:') {
+    setSWStatus('needs http/https — host on a server', 'warn');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js', {scope: './'});
+    setSWStatus('ready · ' + (reg.active ? 'active' : 'installing…'), 'ok');
+    reg.addEventListener('updatefound', () => {
+      const newSW = reg.installing;
+      if (newSW) newSW.addEventListener('statechange', () => {
+        if (newSW.state === 'activated') setSWStatus('updated — reload to apply', 'warn');
+      });
+    });
+  } catch(e) {
+    setSWStatus('register failed: ' + e.message, 'err');
+  }
+}
+
+function setSWStatus(msg, kind) {
+  const el = document.getElementById('sw-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = kind === 'ok' ? 'var(--grn)' : kind === 'warn' ? 'var(--acc)' : 'var(--warn)';
+}
+
+function updateOfflineDot() {
+  const dot = document.getElementById('offline-dot');
+  if (!dot) return;
+  if (navigator.onLine) {
+    dot.className = '';
+    dot.title = 'Online';
+  } else {
+    dot.className = 'off';
+    dot.title = 'Offline — Record page still works';
+  }
+}
+window.addEventListener('online',  updateOfflineDot);
+window.addEventListener('offline', updateOfflineDot);
+
+// ══════════════════════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════════════════════
+const DEF_COMPS = [
+  {id:'pole',name:'Pole',unit:'nos',cat:'structure',est:0},
+  {id:'cable_25_2c',name:'ABC 25mm² 2-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'cable_50_2c',name:'ABC 50mm² 2-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'cable_50_4c',name:'ABC 50mm² 4-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'i_bolt',name:'I-Bolt',unit:'nos',cat:'hardware',est:0},
+  {id:'susp_clamp',name:'Suspension Clamp',unit:'nos',cat:'fitting',est:0},
+  {id:'anchor_clamp',name:'Anchor Clamp (Dead-end)',unit:'nos',cat:'fitting',est:0},
+  {id:'d_iron',name:'D-Iron with Shackle Insulator',unit:'nos',cat:'hardware',est:0},
+  {id:'lt_stay',name:'LT Stay Set',unit:'set',cat:'structure',est:0},
+  {id:'stay_wire',name:'Stay Wire',unit:'m',cat:'structure',est:0},
+  {id:'connector_ipc',name:'Connector (IPC)',unit:'nos',cat:'fitting',est:0},
+  {id:'pg_clamp',name:'PG Clamp',unit:'nos',cat:'fitting',est:0},
+  {id:'earth_rod',name:'Earthing Rod / Pipe',unit:'nos',cat:'safety',est:0},
+  {id:'pin_insul',name:'Pin Insulator',unit:'nos',cat:'insulator',est:0},
+  {id:'disc_insul',name:'Disc Insulator',unit:'nos',cat:'insulator',est:0},
+  {id:'cross_arm',name:'Cross-arm',unit:'nos',cat:'structure',est:0},
+  {id:'fuse_cutout',name:'Fuse Cutout (DO Fuse)',unit:'nos',cat:'protection',est:0},
+  {id:'lightning_arr',name:'Lightning Arrester',unit:'nos',cat:'protection',est:0},
+  {id:'conductor',name:'Conductor Wire',unit:'m',cat:'cable',est:0},
+];
+const NEW_COL = '#00d4a4';
+const EST_COL = '#ffce00';
+const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+// HIGH-PRECISION GPS targets
+const GPS_TARGET_ACC = 8;     // metres — auto-lock threshold
+const GPS_GOOD_ACC   = 15;    // metres — "good" colour
+const GPS_MIN_READS  = 3;     // need at least this many valid readings
+
+// Component icon glyphs for map overlay
+const COMP_GLYPH = {
+  pole:'🪵', disc_insul:'⊙', pin_insul:'◉', cross_arm:'┬',
+  fuse_cutout:'⚡', lightning_arr:'⚠', lt_stay:'╳', anchor_clamp:'⌐',
+  earth_rod:'⏚', susp_clamp:'◠', connector_ipc:'⊕', pg_clamp:'◇',
+  i_bolt:'⊥', cable_25_2c:'━', cable_50_2c:'═', cable_50_4c:'≣',
+  conductor:'─', d_iron:'╞', stay_wire:'╲'
+};
+
+// ══════════════════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════════════════
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v != null ? JSON.parse(v) : d; } catch(e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} };
+const lsDel = k => { try { localStorage.removeItem(k); } catch(e) {} };
+const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+const today = () => new Date().toISOString().slice(0,10);
+const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toast(msg, col) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = col || 'var(--acc)';
+  t.style.color = col ? '#fff' : '#000';
+  t.classList.add('sh');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('sh'), 2800);
+}
+
+// ══════════════════════════════════════════════════════
+// PHOTO DB (IndexedDB)
+// ══════════════════════════════════════════════════════
+const photoDB = {
+  db:null,
+  open() {
+    if (this.db) return Promise.resolve();
+    return new Promise((res, rej) => {
+      const req = indexedDB.open('FieldGridPhotos', 1);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('photos')) {
+          const s = db.createObjectStore('photos', {keyPath:'id'});
+          s.createIndex('by_proj','projectId');
+          s.createIndex('by_pole',['projectId','poleCode']);
+        }
+      };
+      req.onsuccess = e => { this.db = e.target.result; res(); };
+      req.onerror = () => rej(req.error);
+    });
+  },
+  async put(rec) {
+    await this.open();
+    return new Promise((res, rej) => {
+      const tx = this.db.transaction('photos','readwrite');
+      tx.objectStore('photos').put(rec);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+  },
+  async getById(id) {
+    await this.open();
+    return new Promise((res, rej) => {
+      const req = this.db.transaction('photos','readonly').objectStore('photos').get(id);
+      req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error);
+    });
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// PROJECTS
+// ══════════════════════════════════════════════════════
+let CUR = '';
+const pk = k => `fg_p_${CUR}_${k}`;
+const pGet = (k,d) => lsGet(pk(k), d);
+const pSet = (k,v) => lsSet(pk(k), v);
+const getProjs = () => lsGet('fg_projects', []);
+const saveProjs = ls => lsSet('fg_projects', ls);
+
+function initProjects() {
+  const projs = getProjs();
+  if (!projs.length) {
+    document.getElementById('proj-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('modal-proj-name').focus(), 100);
+    return;
+  }
+  CUR = lsGet('fg_cur', projs[0].id);
+  if (!projs.find(p => p.id === CUR)) CUR = projs[0].id;
+  lsSet('fg_cur', CUR);
+  renderProjSel(); renderProjList();
+}
+
+function createProjectFromModal() {
+  const name = (document.getElementById('modal-proj-name').value || '').trim();
+  if (!name) { toast('⚠ Enter a project name'); return; }
+  const p = {id:genId(), name, created:today()};
+  const ls = getProjs(); ls.push(p); saveProjs(ls);
+  CUR = p.id; lsSet('fg_cur', CUR);
+  document.getElementById('proj-modal').classList.add('hidden');
+  loadState(); renderAll(); renderProjSel(); renderProjList();
+  toast('✅ Project "' + name + '" created');
+}
+
+function renderProjSel() {
+  const sel = document.getElementById('proj-sel');
+  sel.innerHTML = getProjs().map(p =>
+    `<option value="${esc(p.id)}"${p.id===CUR?' selected':''}>${esc(p.name)}</option>`
+  ).join('');
+}
+
+function renderProjList() {
+  const projs = getProjs();
+  document.getElementById('pj-list').innerHTML = projs.map(p => {
+    const poles = lsGet(`fg_p_${p.id}_poles`, []).length;
+    const comps = lsGet(`fg_p_${p.id}_components`, []).filter(c => c.est > 0).length;
+    return `<div class="pjc${p.id===CUR?' cur':''}" onclick="switchProject('${p.id}')">
+      <div style="flex:1"><div class="pn">${esc(p.name)}</div><div class="pm">${poles} poles · ${comps} estimated items · ${p.created||'—'}</div></div>
+      <button class="btn bO sm" onclick="event.stopPropagation();renameProj('${p.id}')">✎</button>
+      ${projs.length>1?`<button class="btn bW sm" onclick="event.stopPropagation();deleteProj('${p.id}')">×</button>`:''}
+    </div>`;
+  }).join('');
+}
+
+function switchProject(id) {
+  CUR = id; lsSet('fg_cur', id);
+  loadState(); renderAll(); renderProjSel(); renderProjList();
+  toast('→ ' + (getProjs().find(p => p.id===id)?.name || id));
+}
+
+function toggleNewProj() {
+  const form = document.getElementById('new-proj-form');
+  const showing = form.style.display === 'flex';
+  form.style.display = showing ? 'none' : 'flex';
+  if (!showing) {
+    const inp = document.getElementById('new-proj-name');
+    inp.value = 'Project ' + (getProjs().length + 1);
+    inp.focus(); inp.select();
+  }
+}
+
+function createProject() {
+  const name = (document.getElementById('new-proj-name').value || '').trim();
+  if (!name) { toast('⚠ Enter project name'); return; }
+  const p = {id:genId(), name, created:today()};
+  const ls = getProjs(); ls.push(p); saveProjs(ls);
+  document.getElementById('new-proj-form').style.display = 'none';
+  switchProject(p.id);
+  toast('✅ "' + name + '" created');
+}
+
+function renameProj(id) {
+  const p = getProjs().find(x => x.id===id);
+  const n = prompt('Rename project:', p?.name || '');
+  if (!n || !n.trim()) return;
+  saveProjs(getProjs().map(x => x.id===id ? Object.assign({}, x, {name:n.trim()}) : x));
+  if (id === CUR) renderProjSel();
+  renderProjList(); toast('✅ Renamed');
+}
+
+function deleteProj(id) {
+  const p = getProjs().find(x => x.id===id);
+  if (!confirm('Delete "' + (p?.name||id) + '" and all data?')) return;
+  try { Object.keys(localStorage).filter(k => k.startsWith('fg_p_'+id+'_')).forEach(k => localStorage.removeItem(k)); } catch(e) {}
+  const ls = getProjs().filter(x => x.id !== id);
+  saveProjs(ls);
+  if (CUR === id && ls.length) switchProject(ls[0].id);
+  else renderProjList();
+}
+
+// ══════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════
+const S = {poles:[], components:[], locations:[], counters:{}, gps:null, gpsLocked:false, cableConnect:null, curPhotos:[]};
+
+function loadState() {
+  S.poles = pGet('poles', []);
+  S.components = pGet('components', JSON.parse(JSON.stringify(DEF_COMPS)));
+  S.locations = pGet('locations', []);
+  S.counters = {};
+  S.components.forEach(c => S.counters[c.id] = 0);
+  S.curPhotos = [];
+  S.gpsLocked = false;
+}
+
+// ══════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════
+document.getElementById('main-nav').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-pg]');
+  if (btn) goPage(btn.dataset.pg);
+});
+
+function goPage(pg) {
+  document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.pg === pg));
+  const target = document.getElementById('pg-' + pg);
+  if (target) {
+    target.classList.add('on');
+    document.getElementById('main-content').scrollTo({top:0, behavior:'smooth'});
+  }
+  if (pg === 'record') {
+    renderCtrs(); renderPoleList(); syncLocDrop(); showCablePrompt();
+    // Auto-start continuous GPS tracking so the user doesn't have to think about it.
+    // It keeps running across pole saves — best reading at save-time is captured.
+    if (!gpsSession || !gpsSession.running) startHighPrecisionGPS();
+    setTimeout(() => updateLiveSpan(), 50);   // refresh span hint
+  }
+  if (pg === 'sld')    { switchSLDTab('map'); }
+  if (pg === 'report') { renderReport(); }
+  if (pg === 'ai')     { syncAIStatus(); }
+}
+
+// ══════════════════════════════════════════════════════
+// ▼▼▼ HIGH-PRECISION GPS WITH AUTO-LOCK AT ≤8m ▼▼▼
+// ══════════════════════════════════════════════════════
+let gpsWatchId = null;
+let gpsManualMode = false;
+let gpsSession = null;   // {startMs, readings:[], best:null, running:boolean}
+
+function startHighPrecisionGPS() {
+  // Toggle off if running
+  if (gpsSession && gpsSession.running) { stopHighPrecisionGPS('cancelled'); return; }
+
+  if (!navigator.geolocation) {
+    showGPSStatus('⚠ Geolocation not supported in this browser.\nUse Manual entry.', 'warn');
+    return;
+  }
+  if (window.location.protocol === 'file:') {
+    showGPSStatus('⚠ GPS blocked on file:// — host on a server or use Manual entry.', 'warn');
+    return;
+  }
+
+  gpsSession = {startMs: Date.now(), readings: [], best: null, running: true};
+  S.gpsLocked = false;
+  document.getElementById('gblk').classList.remove('lk');
+  document.getElementById('gblk').classList.add('refining');
+  const btn = document.getElementById('gps-req-btn');
+  btn.classList.add('active');
+  btn.innerHTML = '⏹ Stop (refining…)';
+  updateGPSPill('refining', '…');
+  updateAccDisplay(null, 'acquiring…');
+
+  showGPSStatus('Acquiring high-precision fix… stand still, sky-view helps.', 'info');
+
+  gpsWatchId = navigator.geolocation.watchPosition(
+    onGPSReading,
+    onGPSError,
+    {enableHighAccuracy: true, timeout: 30000, maximumAge: 0}
+  );
+
+  // Periodic UI updates for elapsed time
+  if (gpsSession._ticker) clearInterval(gpsSession._ticker);
+  gpsSession._ticker = setInterval(() => {
+    if (!gpsSession || !gpsSession.running) return;
+    const sec = Math.floor((Date.now() - gpsSession.startMs) / 1000);
+    document.getElementById('gs-elapsed').textContent = sec + 's';
+    // Soft timeout — if 90s and still no fix ≤8m, prompt user
+    if (sec === 90 && (!gpsSession.best || gpsSession.best.acc > GPS_TARGET_ACC)) {
+      showGPSStatus(
+        '⏱ 90s elapsed without ≤8m fix.\n' +
+        (gpsSession.best ? 'Best so far: ±' + gpsSession.best.acc.toFixed(1) + 'm — tap "Lock at Best" below to accept, or keep waiting.' :
+         'No valid fix yet — move to open sky or use Manual entry.'),
+        'warn'
+      );
+      showLockAtBestBtn();
+    }
+  }, 1000);
+}
+
+function onGPSReading(pos) {
+  if (!gpsSession || !gpsSession.running) return;
+  const reading = {
+    lat: pos.coords.latitude,
+    lng: pos.coords.longitude,
+    acc: pos.coords.accuracy,
+    alt: pos.coords.altitude,
+    speed: pos.coords.speed,
+    ts: Date.now()
+  };
+  gpsSession.readings.push(reading);
+
+  // Track best (lowest accuracy = most precise)
+  if (!gpsSession.best || reading.acc < gpsSession.best.acc) {
+    gpsSession.best = reading;
+  }
+
+  // Update displays
+  document.getElementById('gs-readings').textContent = gpsSession.readings.length;
+  document.getElementById('gs-best').textContent = gpsSession.best.acc.toFixed(1);
+  updateAccDisplay(reading.acc, 'live');
+  updateAccBar(reading.acc);
+
+  // Show live coords (averaged from recent readings for stability)
+  const recent = gpsSession.readings.slice(-5);
+  const avgLat = recent.reduce((a,r) => a + r.lat, 0) / recent.length;
+  const avgLng = recent.reduce((a,r) => a + r.lng, 0) / recent.length;
+  document.getElementById('gco').className = 'gco';
+  document.getElementById('gco').textContent = avgLat.toFixed(6) + ', ' + avgLng.toFixed(6);
+
+  updateGPSPill('refining', '±' + reading.acc.toFixed(0) + 'm');
+
+  // ── LIVE SPAN PREVIEW — distance from previous pole ──
+  updateLiveSpan(reading);
+
+  // ── AUTO-LOCK condition ──
+  if (reading.acc <= GPS_TARGET_ACC && gpsSession.readings.length >= GPS_MIN_READS) {
+    autoLockGPS();
+  }
+}
+
+// ── LIVE SPAN: update the span input as the user walks, distance from last saved pole ──
+function updateLiveSpan(reading) {
+  const spanInput = document.getElementById('inp-span');
+  const spanHint = document.getElementById('inp-span-hint');
+  if (!spanInput || !spanHint) return;
+  if (!S.poles || !S.poles.length) {
+    spanHint.textContent = 'First pole — no previous to measure from';
+    spanHint.style.color = 'var(--i3)';
+    return;
+  }
+  const last = S.poles[S.poles.length - 1];
+  if (!last.lat || !last.lng) {
+    spanHint.textContent = 'Previous pole has no GPS — type span manually';
+    spanHint.style.color = 'var(--warn)';
+    return;
+  }
+  // Use this reading if given, else last best
+  const ref = reading || (gpsSession && gpsSession.best) || null;
+  if (!ref) {
+    spanHint.textContent = 'Waiting for GPS…';
+    spanHint.style.color = 'var(--i3)';
+    return;
+  }
+  const dist = haversine(last.lat, last.lng, ref.lat, ref.lng);
+  // Only auto-fill if user hasn't typed something
+  if (!spanInput.dataset.userTyped) {
+    spanInput.value = dist.toFixed(1);
+  }
+  spanHint.textContent = '📐 Live: ' + dist.toFixed(1) + 'm from ' + last.code + ' (±' + (ref.acc||0).toFixed(0) + 'm)';
+  spanHint.style.color = 'var(--grn)';
+}
+
+function onGPSError(err) {
+  let msg = '⚠ GPS error: ';
+  if (err.code === 1) msg += 'Permission denied.\nSettings → Privacy → Location → Safari/Chrome → While Using.';
+  else if (err.code === 2) msg += 'Position unavailable.\nMove outdoors with sky view.';
+  else if (err.code === 3) msg += 'Timeout. Signal too weak here.\nMove outdoors or use Manual entry.';
+  else msg += err.message;
+  showGPSStatus(msg, 'warn');
+  // Keep session running — user may still want to wait or stop manually
+}
+
+function autoLockGPS() {
+  if (!gpsSession || !gpsSession.best) return;
+
+  // Use best reading as the locked fix
+  const b = gpsSession.best;
+  S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length};
+  S.gpsLocked = true;
+
+  stopHighPrecisionGPS('locked');
+
+  document.getElementById('gblk').classList.add('lk');
+  document.getElementById('gblk').classList.remove('refining');
+
+  showGPSFix('🔒 Auto-locked at ±' + b.acc.toFixed(1) + 'm (' + gpsSession.readings.length + ' readings)', false);
+  updateGPSPill('locked', '🔒 ' + b.acc.toFixed(0) + 'm');
+  showGPSStatus('✅ Auto-locked at ' + b.acc.toFixed(1) + 'm accuracy — target ≤' + GPS_TARGET_ACC + 'm reached.', 'ok');
+  toast('🔒 GPS locked ±' + b.acc.toFixed(1) + 'm', '#00d4a4');
+
+  // Vibrate to confirm
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+}
+
+function manualLockAtBest() {
+  if (!gpsSession || !gpsSession.best) { toast('⚠ No readings yet'); return; }
+  const b = gpsSession.best;
+  S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length};
+  S.gpsLocked = true;
+  stopHighPrecisionGPS('manual-lock');
+  document.getElementById('gblk').classList.add('lk');
+  document.getElementById('gblk').classList.remove('refining');
+  showGPSFix('Locked at best fix ±' + b.acc.toFixed(1) + 'm', false);
+  updateGPSPill('locked', '🔒 ' + b.acc.toFixed(0) + 'm');
+  showGPSStatus('Locked at ' + b.acc.toFixed(1) + 'm (best of ' + gpsSession.readings.length + ' readings)', 'ok');
+  toast('🔒 Locked ±' + b.acc.toFixed(1) + 'm', '#00d4a4');
+}
+
+function stopHighPrecisionGPS(reason) {
+  if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+  if (gpsSession && gpsSession._ticker) { clearInterval(gpsSession._ticker); gpsSession._ticker = null; }
+  if (gpsSession) gpsSession.running = false;
+  const btn = document.getElementById('gps-req-btn');
+  btn.classList.remove('active');
+  btn.innerHTML = S.gpsLocked ? '🔒 Locked — Tap to Re-acquire' : '▶ Start Auto-Lock';
+  hideLockAtBestBtn();
+}
+
+function showLockAtBestBtn() {
+  let btn = document.getElementById('gps-lockbest-btn');
+  if (btn) return;
+  btn = document.createElement('button');
+  btn.id = 'gps-lockbest-btn';
+  btn.className = 'btn bA full';
+  btn.style.cssText = 'margin-top:8px;padding:12px';
+  btn.textContent = '✓ Lock at Best (' + gpsSession.best.acc.toFixed(1) + 'm)';
+  btn.addEventListener('click', manualLockAtBest);
+  document.getElementById('gps-auto-section').appendChild(btn);
+}
+function hideLockAtBestBtn() {
+  const btn = document.getElementById('gps-lockbest-btn');
+  if (btn) btn.remove();
+}
+
+function updateGPSPill(state, txt) {
+  const pill = document.getElementById('gps-pill');
+  pill.className = state || '';
+  pill.textContent = txt || 'GPS off';
+}
+
+function updateAccDisplay(acc, label) {
+  const big = document.getElementById('acc-big');
+  const status = document.getElementById('acc-status');
+  const sub = document.getElementById('acc-sub');
+  if (acc == null) {
+    big.textContent = '—';
+    big.className = 'acc-big';
+    if (label) status.textContent = label;
+    return;
+  }
+  big.textContent = '±' + acc.toFixed(1) + 'm';
+  if (acc <= GPS_TARGET_ACC)      big.className = 'acc-big excellent';
+  else if (acc <= GPS_GOOD_ACC)   big.className = 'acc-big good';
+  else                            big.className = 'acc-big poor';
+
+  if (label === 'live') {
+    status.textContent = acc <= GPS_TARGET_ACC ? 'Excellent — within target' :
+                         acc <= GPS_GOOD_ACC   ? 'Good — refining toward ≤8m' :
+                                                 'Poor signal — refining…';
+    sub.textContent = 'Live: averaging readings. Auto-lock at ≤' + GPS_TARGET_ACC + 'm.';
+  }
+}
+
+function updateAccBar(acc) {
+  const bar = document.getElementById('gbf');
+  if (!bar) return;
+  // Map accuracy → bar fill: 0m→100%, 50m+→5%
+  const pct = Math.max(5, Math.min(100, 100 - acc * 1.5));
+  bar.style.width = pct + '%';
+  if (acc <= GPS_TARGET_ACC)    bar.className = 'gbf';
+  else if (acc <= GPS_GOOD_ACC) bar.className = 'gbf w';
+  else                          bar.className = 'gbf b';
+}
+
+function toggleManualGPS() {
+  gpsManualMode = !gpsManualMode;
+  document.getElementById('gps-manual-section').style.display = gpsManualMode ? 'block' : 'none';
+  document.getElementById('gps-auto-section').style.display = gpsManualMode ? 'none' : 'block';
+  const btn = document.getElementById('gps-manual-toggle-btn');
+  if (btn) btn.textContent = gpsManualMode ? '× Hide' : '✎ Manual';
+}
+
+function setManualGPS() {
+  const lat = parseFloat(document.getElementById('inp-lat').value);
+  const lng = parseFloat(document.getElementById('inp-lng').value);
+  if (isNaN(lat) || isNaN(lng)) { toast('⚠ Enter valid latitude and longitude'); return; }
+  if (lat < -90 || lat > 90)    { toast('⚠ Latitude must be -90 to 90'); return; }
+  if (lng < -180 || lng > 180)  { toast('⚠ Longitude must be -180 to 180'); return; }
+  S.gps = {lat, lng, acc: 10, manual: true};
+  S.gpsLocked = true;
+  document.getElementById('gblk').classList.add('lk');
+  showGPSFix('Manual entry · ±10m assumed', true);
+  updateGPSPill('locked', '🔒 manual');
+  toast('✓ Coordinates set', '#00d4a4');
+}
+
+function showGPSFix(accLabel, isManual) {
+  if (!S.gps) return;
+  document.getElementById('gps-fix-display').style.display = 'block';
+  document.getElementById('gps-fix-coords').textContent = S.gps.lat.toFixed(6) + ', ' + S.gps.lng.toFixed(6);
+  document.getElementById('gps-fix-acc').textContent = accLabel + (isManual ? ' ✎' : ' 📍');
+}
+
+function showGPSStatus(msg, type) {
+  const box = document.getElementById('gps-status-box');
+  if (!box) return;
+  if (!msg) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.style.background = type === 'warn' ? 'rgba(255,85,68,.08)' : type === 'ok' ? 'rgba(0,212,164,.08)' : 'rgba(255,206,0,.06)';
+  box.style.border = '1px solid ' + (type === 'warn' ? 'var(--warn)' : type === 'ok' ? 'var(--grn)' : 'var(--acc)');
+  box.style.color = type === 'warn' ? 'var(--warn)' : 'var(--i2)';
+  box.style.whiteSpace = 'pre-wrap';
+  box.textContent = msg;
+}
+
+// ══════════════════════════════════════════════════════
+// FILE UPLOAD & SDS PARSING (unchanged from v5)
+// ══════════════════════════════════════════════════════
+function handleUpload(inp) {
+  const file = inp.files[0]; if (!file) return;
+  const ext = file.name.toLowerCase().split('.').pop();
+  setUpz('⏳', 'Reading…', file.name);
+  const rd = new FileReader();
+  rd.onload = e => {
+    try {
+      if (ext === 'xlsx' || ext === 'xls') applyData(parseXLSX(e.target.result), file.name, 'Built-in');
+      else applyData(parseCSV(e.target.result), file.name, 'CSV');
+    } catch(err) { toast('⚠ ' + err.message); setUpz('📂', 'Tap to upload', 'Try again'); }
+  };
+  if (ext === 'xlsx' || ext === 'xls') rd.readAsArrayBuffer(file);
+  else rd.readAsText(file);
+  inp.value = '';
+}
+
+function parseXLSX(buf) {
+  const wb = XLSX.read(buf, {type:'array'});
+  const sn = wb.SheetNames.find(n => /^sds$|sds[\s_-]|survey.?design/i.test(n)) || wb.SheetNames[0];
+  return parseSDS(wb.Sheets[sn], sn);
+}
+
+function parseSDS(ws, sheetName) {
+  const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+  const rows = raw.map(r => r.map(x => String(x || '').trim()));
+  const res = {components:[], locations:[], sheet:sheetName};
+
+  if (rows.length >= 6) {
+    const row6 = rows[5].join(' ');
+    const wa = row6.match(/works?\s*at\s*[:-]?\s*(.+)/i);
+    if (wa) {
+      wa[1].split(',').map(l => l.trim()).filter(l => l.length > 1 && !/^\d+$/.test(l))
+        .forEach(l => { if (!res.locations.includes(l)) res.locations.push(l); });
+    } else {
+      rows[5].forEach(cell => {
+        if (cell.length > 2 && !/^\d/.test(cell) && !/works|date|ref|project|prepared|page|no.?$/i.test(cell)) {
+          cell.split(',').map(l => l.trim()).filter(l => l.length > 1 && !/^\d+$/.test(l))
+            .forEach(l => { if (!res.locations.includes(l)) res.locations.push(l); });
+        }
+      });
+    }
+  }
+
+  let descRow = -1, colName = 0, colQty = 1, colUnit = 2;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], j = r.join(' ').toLowerCase();
+    if (/description|item|particulars|material|component|name/.test(j) && /qty|quantity|nos|unit|amount|number/.test(j)) {
+      colName = r.findIndex(c => /description|item|particulars|material|component|name/i.test(c));
+      colQty = r.findIndex(c => /qty|quantity|nos|amount|number/i.test(c));
+      colUnit = r.findIndex(c => /unit/i.test(c));
+      if (colName < 0) colName = 0;
+      if (colQty < 0) colQty = colName + 1;
+      if (colUnit < 0) colUnit = colQty + 1;
+      descRow = i + 1; break;
+    }
+  }
+  if (descRow < 0) descRow = 0;
+
+  for (let i = descRow; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.every(c => !c)) break;
+    let name = r[colName] || '', qtyRaw = r[colQty] || '', unit = r[colUnit] || 'nos';
+    if (/^\d{1,4}$/.test(name.trim())) { name = r[colName+1]||''; qtyRaw = r[colQty+1]||r[colQty]||''; unit = r[colUnit+1]||r[colUnit]||'nos'; }
+    name = name.trim(); unit = String(unit).trim().slice(0,12) || 'nos';
+    const qty = parseFloat(String(qtyRaw).replace(/[^0-9.]/g, ''));
+    if (!name || name.length < 2) continue;
+    if (/^(s.?no|sn\b|sl.?no?|#|description|item|name|material|particulars|qty|quantity|unit|total|grand|sub.?total|amount|remarks|note)/i.test(name)) continue;
+    const id = 'imp_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0,40);
+    if (res.components.find(c => c.id === id)) continue;
+    res.components.push({id, name, unit, cat:'imported', est: isNaN(qty) ? 0 : qty});
+  }
+  return res;
+}
+
+function parseCSV(text) {
+  const res = {components:[], locations:[]}; let mode = 'comp';
+  for (const line of text.split(/\r?\n/).map(l => l.trim())) {
+    if (!line) continue;
+    if (/^#?\s*comp/i.test(line)) { mode = 'comp'; continue; }
+    if (/^#?\s*(loc|area|villag)/i.test(line)) { mode = 'loc'; continue; }
+    const p = line.split(/[,;\t|]/).map(x => x.trim());
+    if (mode === 'comp' && p[0] && p[0].length > 1) {
+      const qty = parseFloat(p[1]);
+      const id = 'csv_' + p[0].toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0,40);
+      res.components.push({id, name:p[0], unit:p[2]||'nos', cat:'csv', est:isNaN(qty)?0:qty});
+    } else if (mode === 'loc' && p[0]) res.locations.push(p[0]);
+  }
+  return res;
+}
+
+function applyData(data, filename, source) {
+  const msgs = [];
+  if (data.components && data.components.length > 0) {
+    S.components = data.components;
+    pSet('components', S.components);
+    msgs.push(data.components.length + ' components');
+  } else {
+    const st = document.getElementById('parse-st');
+    st.classList.add('sh'); st.style.borderLeftColor = 'var(--warn)';
+    st.innerHTML = '⚠ No components found. Defaults kept.';
+    if (data.locations?.length) {
+      S.locations = [...new Set(data.locations.map(l => l.trim()).filter(l => l.length > 1))];
+      pSet('locations', S.locations);
+      toast('✅ ' + S.locations.length + ' locations loaded');
+    }
+    renderComps(); renderLocs(); return;
+  }
+  S.locations = data.locations?.length ? [...new Set(data.locations.map(l => l.trim()).filter(l => l.length > 1))] : [];
+  pSet('locations', S.locations);
+  msgs.push(S.locations.length + ' locations');
+  setUpz('✅', filename, msgs.join(' · '));
+  const st = document.getElementById('parse-st');
+  st.classList.add('sh'); st.style.borderLeftColor = 'var(--grn)';
+  st.innerHTML = '✓ <b>' + esc(source) + '</b>: ' + msgs.join(', ');
+  toast('✅ ' + msgs.join(' & '));
+  renderComps(); renderLocs();
+}
+
+function setUpz(ico, ttl, dsc) {
+  document.getElementById('upz-ico').textContent = ico;
+  document.getElementById('upz-ttl').textContent = ttl;
+  document.getElementById('upz-dsc').textContent = dsc;
+}
+
+// ══════════════════════════════════════════════════════
+// COMPONENTS & LOCATIONS
+// ══════════════════════════════════════════════════════
+function renderComps() {
+  document.getElementById('cc-cnt').textContent = S.components.length;
+  document.getElementById('comp-list').innerHTML = S.components.map((c,i) =>
+    `<div class="er">
+      <input value="${esc(c.name)}" oninput="S.components[${i}].name=this.value;pSet('components',S.components)" placeholder="Name" style="min-height:36px">
+      <input class="qty" type="number" value="${c.est||''}" oninput="S.components[${i}].est=parseFloat(this.value)||0;pSet('components',S.components)" placeholder="Est" inputmode="decimal" style="min-height:36px">
+      <input class="unt" value="${esc(c.unit)}" oninput="S.components[${i}].unit=this.value;pSet('components',S.components)" placeholder="unit" style="min-height:36px">
+      <button class="x" onclick="S.components.splice(${i},1);pSet('components',S.components);renderComps()">×</button>
+    </div>`
+  ).join('') || '<div class="empty">No components — upload file or add manually</div>';
+}
+
+function addComp() {
+  S.components.push({id:'c_'+genId(), name:'New component', unit:'nos', cat:'custom', est:0});
+  pSet('components', S.components); renderComps();
+}
+
+function renderLocs() {
+  document.getElementById('lc-cnt').textContent = S.locations.length;
+  document.getElementById('loc-list').innerHTML = S.locations.map((l,i) =>
+    `<div class="er">
+      <input value="${esc(l)}" oninput="S.locations[${i}]=this.value;pSet('locations',S.locations)" placeholder="Area / village" style="min-height:36px">
+      <button class="x" onclick="S.locations.splice(${i},1);pSet('locations',S.locations);renderLocs()">×</button>
+    </div>`
+  ).join('') || '<div class="empty">No locations — upload file or add manually</div>';
+}
+
+function addLoc() {
+  S.locations.push('New location'); pSet('locations', S.locations); renderLocs();
+}
+
+function syncLocDrop() {
+  const sel = document.getElementById('inp-loc'), cur = sel.value;
+  sel.innerHTML = '<option value="">— select location —</option>' +
+    S.locations.map(l => `<option value="${esc(l)}"${l===cur?' selected':''}>${esc(l)}</option>`).join('');
+}
+
+function updatePoleCodeDisplay() {
+  const el = document.getElementById('inp-code-display');
+  if (el) el.textContent = nextPoleCode();
+}
+
+function showCablePrompt() {
+  const cp = document.getElementById('cable-prompt');
+  if (!S.poles.length) { cp.classList.remove('sh'); S.cableConnect = null; return; }
+  const last = S.poles[S.poles.length - 1];
+  document.getElementById('cp-info').innerHTML = `Previous: <b>${esc(last.code)}</b> · ${esc(last.location||'—')}`;
+  cp.classList.add('sh'); S.cableConnect = null;
+}
+
+function setCable(v) {
+  S.cableConnect = v;
+  document.getElementById('cable-prompt').classList.remove('sh');
+  toast(v ? '🔌 Cable connected' : '⏭ Standalone');
+}
+
+// ══════════════════════════════════════════════════════
+// PHOTOS
+// ══════════════════════════════════════════════════════
+let _pTarget = 'pending', _curViewPh = null;
+
+function capturePhoto(target) {
+  _pTarget = target || 'pending';
+  document.getElementById('photo-input').click();
+}
+
+async function handlePhoto(inp) {
+  const file = inp.files[0]; if (!file) return; inp.value = '';
+  const rd = new FileReader();
+  rd.onload = async e => {
+    const full = await resizeImg(e.target.result, 1400);
+    const thumb = await resizeImg(e.target.result, 220);
+    const projName = getProjs().find(p => p.id===CUR)?.name || 'Project';
+    const id = 'ph_' + CUR + '_' + _pTarget + '_' + Date.now();
+    const fileName = projName.replace(/[^a-z0-9]/gi,'_') + '/' + _pTarget + '_' + Date.now() + '.jpg';
+    const rec = {id, projectId:CUR, poleCode:_pTarget, fileName, data:full, thumb, takenAt:new Date().toISOString()};
+    try {
+      await photoDB.put(rec);
+      if (_pTarget === 'pending') { S.curPhotos.push(rec); renderCurPhotos(); }
+      else {
+        const pole = S.poles.find(p => p.code === _pTarget);
+        if (pole) { if (!pole.photoIds) pole.photoIds = []; pole.photoIds.push(id); pSet('poles', S.poles); renderPoleList(); }
+      }
+      toast('📷 Photo saved');
+    } catch(err) { toast('⚠ Photo save failed'); }
+  };
+  rd.readAsDataURL(file);
+}
+
+function resizeImg(dataUrl, maxDim) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let {width:w, height:h} = img;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = Math.round(h*maxDim/w); w = maxDim; } else { w = Math.round(w*maxDim/h); h = maxDim; }
+      }
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(cv.toDataURL('image/jpeg', 0.78));
+    };
+    img.src = dataUrl;
+  });
+}
+
+function renderCurPhotos() {
+  const strip = document.getElementById('cur-photos');
+  if (!S.curPhotos.length) { strip.innerHTML = '<span style="font-size:11px;color:var(--i3);align-self:center">No photos yet</span>'; return; }
+  strip.innerHTML = S.curPhotos.map(ph => `<img class="photo-thumb pend" src="${ph.thumb}" onclick="openPhotoModal('${ph.id}')">`).join('');
+}
+
+async function openPhotoModal(id) {
+  try {
+    const ph = await photoDB.getById(id); if (!ph) return;
+    _curViewPh = ph;
+    document.getElementById('photo-modal-img').src = ph.data;
+    document.getElementById('photo-modal-cap').textContent = ph.fileName;
+    document.getElementById('photo-modal').classList.remove('hidden');
+  } catch(e) {}
+}
+function closePhotoModal() { document.getElementById('photo-modal').classList.add('hidden'); _curViewPh = null; }
+function downloadCurPhoto() {
+  if (!_curViewPh) return;
+  const a = document.createElement('a'); a.href = _curViewPh.data;
+  a.download = _curViewPh.fileName.split('/').pop(); a.click();
+}
+
+// ══════════════════════════════════════════════════════
+// COUNTERS
+// ══════════════════════════════════════════════════════
+function renderCtrs() {
+  document.getElementById('rec-proj').textContent = getProjs().find(p => p.id===CUR)?.name || '';
+  updatePoleCodeDisplay();
+  document.getElementById('ctr-list').innerHTML = S.components.map(c => {
+    const v = S.counters[c.id] || 0;
+    const isEst = c.est > 0;
+    return `<div class="cc${v>0?' hv':''}" id="cc-${c.id}">
+      <div class="nm">${esc(c.name)}<span class="tbadge ${isEst?'est':'new'}">${isEst?'EST:'+c.est:'NEW'}</span><div class="mt">${esc(c.unit)}</div></div>
+      <div class="ctrl">
+        <button onclick="bump('${c.id}',-1)">−</button>
+        <div class="vl" id="cv-${c.id}">${v}</div>
+        <button onclick="bump('${c.id}',1)">＋</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function bump(id, d) {
+  S.counters[id] = Math.max(0, (S.counters[id]||0) + d);
+  const v = S.counters[id];
+  const valEl = document.getElementById('cv-' + id);
+  const rowEl = document.getElementById('cc-' + id);
+  if (valEl) valEl.textContent = v;
+  if (rowEl) rowEl.className = 'cc' + (v > 0 ? ' hv' : '');
+}
+
+function resetCtrs() {
+  S.counters = {};
+  S.components.forEach(c => S.counters[c.id] = 0);
+  renderCtrs();
+}
+
+function resetRecordSession() {
+  if (!confirm('Clear current form, counters and pending photos?\n\nSaved poles are NOT affected.')) return;
+  document.getElementById('inp-span').value = '';
+  document.getElementById('inp-rem').value = '';
+  document.getElementById('inp-loc').value = '';
+  document.getElementById('inp-type').value = 'psc';
+  S.curPhotos = []; renderCurPhotos();
+  S.counters = {}; S.components.forEach(c => S.counters[c.id] = 0);
+  S.gpsLocked = false;
+  S.cableConnect = null;
+  document.getElementById('gblk').classList.remove('lk');
+  document.getElementById('cable-prompt').classList.remove('sh');
+  renderCtrs(); updatePoleCodeDisplay();
+  toast('↺ Session cleared');
+}
+
+// ══════════════════════════════════════════════════════
+// SAVE POLE
+// ══════════════════════════════════════════════════════
+function nextPoleCode() { return 'P' + (S.poles.length + 1); }
+
+function savePole() {
+  const loc = document.getElementById('inp-loc').value;
+  if (!loc) { toast('⚠ Select location first'); return; }
+  const code = nextPoleCode();
+
+  // ── AUTO-CAPTURE GPS at save time ──
+  // If GPS is running but not "locked", grab the best reading we have right now.
+  // This makes location tracking effortless: user just walks pole-to-pole, hits Save.
+  if (!S.gps && gpsSession && gpsSession.best) {
+    const b = gpsSession.best;
+    S.gps = {lat: b.lat, lng: b.lng, acc: b.acc, manual: false, samples: gpsSession.readings.length, auto: true};
+  }
+
+  let span = parseFloat(document.getElementById('inp-span').value) || null;
+  if (!span && S.gps && S.poles.length) {
+    const last = S.poles[S.poles.length - 1];
+    if (last.lat && last.lng) span = +haversine(last.lat, last.lng, S.gps.lat, S.gps.lng).toFixed(1);
+  }
+  const photoIds = S.curPhotos.map(ph => {
+    ph.poleCode = code; ph.projectId = CUR;
+    photoDB.put(ph).catch(() => {});
+    return ph.id;
+  });
+  const pole = {
+    id: genId(), code, location: loc, span,
+    lat: S.gps?.lat || null, lng: S.gps?.lng || null, acc: S.gps?.acc || null,
+    samples: S.gps?.samples || null,
+    poleType: document.getElementById('inp-type').value,
+    remarks: document.getElementById('inp-rem').value.trim(),
+    components: Object.assign({}, S.counters),
+    photoIds,
+    connectedToPrev: S.poles.length === 0 ? null : (S.cableConnect === true),
+    recordedAt: new Date().toISOString()
+  };
+  S.poles.push(pole); pSet('poles', S.poles);
+
+  const gpsNote = pole.lat ? ' · 📍±'+(pole.acc||0).toFixed(0)+'m' : ' · ⚠ no GPS';
+  toast('✅ Saved ' + code + (photoIds.length ? ' · ' + photoIds.length + '📷' : '') + gpsNote);
+  if (navigator.vibrate) navigator.vibrate(40);
+
+  const spanEl = document.getElementById('inp-span');
+  spanEl.value = '';
+  delete spanEl.dataset.userTyped;
+  document.getElementById('inp-rem').value = '';
+  S.curPhotos = []; renderCurPhotos();
+
+  // ── KEEP GPS RUNNING — don't stop the session between poles ──
+  // Just clear the "this pole's fix" so the next save picks up a fresh best reading.
+  S.gpsLocked = false;
+  S.gps = null;
+  document.getElementById('gblk').classList.remove('lk');
+  document.getElementById('gps-fix-display').style.display = 'none';
+
+  // Reset "best so far" so next pole gets its own fresh best reading
+  if (gpsSession) { gpsSession.best = null; gpsSession.readings = []; gpsSession.startMs = Date.now(); }
+  document.getElementById('gs-readings').textContent = '0';
+  document.getElementById('gs-best').textContent = '—';
+
+  updatePoleCodeDisplay(); resetCtrs(); renderPoleList(); showCablePrompt(); updateLiveSpan();
+}
+
+function renderPoleList() {
+  document.getElementById('pole-cnt').textContent = S.poles.length;
+  document.getElementById('pole-list').innerHTML = [...S.poles].reverse().map(p => {
+    const gpsLine = p.lat
+      ? '📍' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + (p.acc ? ' ±' + p.acc.toFixed(0) + 'm' : '') + (p.pinnedManually ? ' 📌pinned' : '')
+      : '<span style="color:var(--warn)">⚠ No GPS — pin on Map+SLD page</span>';
+    return `<div class="pr${p.connectedToPrev===false?' nc':''}">
+      <div class="cd">${esc(p.code)}</div>
+      <div class="inf">
+        <b>${esc(p.location||'—')}</b>${p.span?' · '+p.span+'m':''}<br>
+        ${gpsLine} · ${p.poleType||'—'}
+        ${p.photoIds?.length ? '<br>📷 ' + p.photoIds.length + ' photo(s)' : ''}
+        ${p.remarks ? '<br><span style="color:var(--i3);font-size:10px">' + esc(p.remarks) + '</span>' : ''}
+      </div>
+      <div class="pra">
+        <button class="ph-btn${p.photoIds?.length?' has':''}" onclick="capturePhoto('${p.code}')">📷</button>
+        <button class="dx" onclick="delPole('${p.id}')">×</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="empty">No poles recorded yet</div>';
+}
+
+function delPole(id) {
+  const p = S.poles.find(x => x.id===id);
+  if (!confirm('Delete pole "' + (p?.code||id) + '"?')) return;
+  S.poles = S.poles.filter(x => x.id !== id);
+  pSet('poles', S.poles); renderPoleList();
+}
+
+function haversine(a, b, c, d) {
+  const R = 6371000, dL = (c-a)*Math.PI/180, dG = (d-b)*Math.PI/180;
+  const x = Math.sin(dL/2)**2 + Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+}
+
+// ══════════════════════════════════════════════════════
+// SLD (pure diagram view — unchanged)
+// ══════════════════════════════════════════════════════
+function populateSLDSels() {
+  const codes = S.poles.map(p => p.code);
+  document.getElementById('sld-from').innerHTML = '<option value="">From…</option>' + codes.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('sld-to').innerHTML = '<option value="">To…</option>' + codes.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function dominantCable(comps) {
+  const cables = [
+    {id:'cable_50_4c', label:'50mm²·4C'},
+    {id:'cable_50_2c', label:'50mm²·2C'},
+    {id:'cable_25_2c', label:'25mm²·2C'},
+    {id:'conductor',   label:'Cond.'},
+  ];
+  for (const cb of cables) if (comps[cb.id] > 0) return cb.label;
+  return '—';
+}
+
+function makeSym(id, cx, cy, col) {
+  switch(id) {
+    case 'pole':
+      return `<line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-8}" y1="${cy-4}" x2="${cx+8}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case 'disc_insul': case 'pin_insul':
+      return `<circle cx="${cx}" cy="${cy}" r="6" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx-4}" y1="${cy}" x2="${cx+4}" y2="${cy}" stroke="${col}" stroke-width="1.5"/>`;
+    case 'cross_arm':
+      return `<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx}" y1="${cy-5}" x2="${cx}" y2="${cy+5}" stroke="${col}" stroke-width="2"/>`;
+    case 'fuse_cutout':
+      return `<rect x="${cx-4}" y="${cy-7}" width="8" height="14" rx="2" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="1.5" stroke-dasharray="2,2"/>`;
+    case 'lightning_arr':
+      return `<polygon points="${cx},${cy-10} ${cx+5},${cy} ${cx+2},${cy} ${cx+7},${cy+10} ${cx-7},${cy+1} ${cx-2},${cy+1}" fill="${col}" stroke="${col}" stroke-width="0.5"/>`;
+    case 'lt_stay':
+      return `<line x1="${cx-8}" y1="${cy-8}" x2="${cx+8}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-8}" y1="${cy+8}" x2="${cx+8}" y2="${cy-8}" stroke="${col}" stroke-width="1.5" stroke-dasharray="3,2"/>`;
+    case 'anchor_clamp':
+      return `<rect x="${cx-7}" y="${cy-5}" width="14" height="10" rx="2" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx-7}" y1="${cy}" x2="${cx+7}" y2="${cy}" stroke="${col}" stroke-width="1.5"/>`;
+    case 'earth_rod':
+      return `<line x1="${cx}" y1="${cy-9}" x2="${cx}" y2="${cy+9}" stroke="${col}" stroke-width="2.5"/><line x1="${cx-6}" y1="${cy+5}" x2="${cx+6}" y2="${cy+5}" stroke="${col}" stroke-width="2"/><line x1="${cx-3}" y1="${cy+8}" x2="${cx+3}" y2="${cy+8}" stroke="${col}" stroke-width="1.5"/>`;
+    case 'susp_clamp':
+      return `<path d="M${cx-6},${cy-4} Q${cx},${cy-10} ${cx+6},${cy-4} L${cx+4},${cy+4} L${cx-4},${cy+4}Z" fill="none" stroke="${col}" stroke-width="2"/>`;
+    case 'connector_ipc': case 'pg_clamp':
+      return `<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="${col}" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="3" fill="${col}"/>`;
+    case 'i_bolt':
+      return `<line x1="${cx}" y1="${cy-9}" x2="${cx}" y2="${cy+9}" stroke="${col}" stroke-width="2"/><circle cx="${cx}" cy="${cy+5}" r="4" fill="none" stroke="${col}" stroke-width="1.8"/>`;
+    case 'cable_25_2c': case 'cable_50_2c':
+      return `<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="3" stroke-linecap="round"/>`;
+    case 'cable_50_4c':
+      return `<line x1="${cx-9}" y1="${cy-4}" x2="${cx+9}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+8}" x2="${cx+9}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case 'conductor':
+      return `<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><circle cx="${cx-3}" cy="${cy}" r="2" fill="${col}"/><circle cx="${cx+3}" cy="${cy}" r="2" fill="${col}"/>`;
+    default:
+      return `<rect x="${cx-6}" y="${cy-6}" width="12" height="12" rx="2" fill="none" stroke="${col}" stroke-width="2"/>`;
+  }
+}
+
+function renderSLD() {
+  const host = document.getElementById('sld-host');
+  if (!S.poles.length) {
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--i3);font-size:12px">Record poles first, then press Draw</div>';
+    return;
+  }
+  const fromCode = document.getElementById('sld-from').value;
+  const toCode = document.getElementById('sld-to').value;
+  let poles = S.poles;
+  if (fromCode || toCode) {
+    const fi = fromCode ? poles.findIndex(p => p.code===fromCode) : 0;
+    const ti = toCode ? poles.findIndex(p => p.code===toCode) : poles.length-1;
+    if (fi >= 0 && ti >= fi) poles = poles.slice(fi, ti+1);
+  }
+  const estIds = new Set(S.components.filter(c => c.est > 0).map(c => c.id));
+  const SYM_BOX = 30, LBL_W = 130;
+  const COL_W = SYM_BOX + 6 + LBL_W + 20;
+  const POLE_SP = COL_W + 20;
+  const PAD_L = 50;
+  const LEGEND_H = 26;
+  const PLATE_H = 44;
+  const PLATE_W = COL_W - 10;
+  const PLATE_Y_TOP = LEGEND_H + 10;
+  const BUS_Y = PLATE_Y_TOP + PLATE_H + 16;
+  const ARM_Y = BUS_Y - 18;
+  const POLE_TOP = ARM_Y - 20;
+  const POLE_BOT = BUS_Y + 20;
+  const GROUND_Y = POLE_BOT;
+  const SYM_START = GROUND_Y + 22;
+  const SYM_ROW = SYM_BOX + 8;
+  const maxSyms = Math.max.apply(null, poles.map(p => Object.values(p.components||{}).filter(v => v > 0).length).concat([0]));
+  const W = PAD_L + poles.length * POLE_SP + 20;
+  const H = SYM_START + maxSyms * SYM_ROW + 40;
+
+  let s = '<svg id="sld-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="min-width:' + W + 'px;height:' + H + 'px;background:#0a0e14;display:block">';
+  for (let gx = 0; gx < W; gx += 40) s += '<line x1="'+gx+'" y1="0" x2="'+gx+'" y2="'+H+'" stroke="#0f1418" stroke-width="1"/>';
+  for (let gy = 0; gy < H; gy += 40) s += '<line x1="0" y1="'+gy+'" x2="'+W+'" y2="'+gy+'" stroke="#0f1418" stroke-width="1"/>';
+  s += '<rect x="0" y="0" width="'+W+'" height="'+LEGEND_H+'" fill="#0d1117"/>';
+  s += '<rect x="8" y="8" width="10" height="10" rx="2" fill="'+NEW_COL+'"/><text x="22" y="17" fill="'+NEW_COL+'" font-size="9" font-family="monospace">New</text>';
+  s += '<rect x="70" y="8" width="10" height="10" rx="2" fill="'+EST_COL+'"/><text x="84" y="17" fill="'+EST_COL+'" font-size="9" font-family="monospace">Estimated</text>';
+  s += '<text x="'+(W-6)+'" y="17" fill="#2a3a2a" font-size="8" text-anchor="end" font-family="monospace">FieldGrid SLD</text>';
+  const busX1 = PAD_L, busX2 = PAD_L + (poles.length-1)*POLE_SP;
+  s += '<line x1="'+(busX1-10)+'" y1="'+BUS_Y+'" x2="'+(busX2+10)+'" y2="'+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2.5"/>';
+  s += '<text x="'+(busX1-14)+'" y="'+(BUS_Y-6)+'" fill="'+EST_COL+'" font-size="9" text-anchor="end" font-weight="bold" font-family="monospace">LT SOURCE</text>';
+
+  poles.forEach((p, i) => {
+    if (i === 0) return;
+    const px = PAD_L + i*POLE_SP;
+    const ppx = PAD_L + (i-1)*POLE_SP;
+    const mid = (ppx+px)/2;
+    if (p.connectedToPrev === false) {
+      s += '<line x1="'+ppx+'" y1="'+BUS_Y+'" x2="'+px+'" y2="'+BUS_Y+'" stroke="#1a2a1a" stroke-width="1.5" stroke-dasharray="8,5"/>';
+    } else {
+      const sag = 10;
+      s += '<path d="M'+ppx+','+BUS_Y+' Q'+mid+','+(BUS_Y+sag)+' '+px+','+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2" fill="none" opacity="0.5"/>';
+      const cb = dominantCable(p.components||{});
+      if (cb !== '—') s += '<text x="'+mid+'" y="'+(BUS_Y+sag+13)+'" fill="'+NEW_COL+'" font-size="8" text-anchor="middle" font-family="monospace">'+esc(cb)+'</text>';
+      if (p.span) s += '<text x="'+mid+'" y="'+(BUS_Y-10)+'" fill="#2a5a2a" font-size="8" text-anchor="middle" font-family="monospace">'+p.span+'m</text>';
+    }
+  });
+
+  poles.forEach((p, i) => {
+    const px = PAD_L + i*POLE_SP;
+    const c = p.components||{};
+    const isExisting = p.poleType === 'existing';
+    const poleCol = isExisting ? '#666666' : EST_COL;
+    const dash = isExisting ? ' stroke-dasharray="6,3"' : '';
+    const plX = px - PLATE_W/2;
+    s += '<rect x="'+plX+'" y="'+PLATE_Y_TOP+'" width="'+PLATE_W+'" height="'+PLATE_H+'" rx="5" fill="#0d1520" stroke="'+poleCol+'" stroke-width="1.5"/>';
+    s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+18)+'" fill="'+EST_COL+'" font-size="14" text-anchor="middle" font-weight="bold" font-family="monospace">'+esc(p.code)+'</text>';
+    if (p.location) {
+      const loc2 = p.location.length > 18 ? p.location.slice(0,17)+'…' : p.location;
+      s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+42)+'" fill="#2a8a2a" font-size="8" text-anchor="middle" font-family="monospace">'+esc(loc2)+'</text>';
+    }
+    s += '<line x1="'+px+'" y1="'+POLE_TOP+'" x2="'+px+'" y2="'+POLE_BOT+'" stroke="'+poleCol+'" stroke-width="4" stroke-linecap="round"'+dash+'/>';
+    const armLen = 22;
+    s += '<line x1="'+(px-armLen)+'" y1="'+ARM_Y+'" x2="'+(px+armLen)+'" y2="'+ARM_Y+'" stroke="'+poleCol+'" stroke-width="4" stroke-linecap="round"/>';
+    s += '<line x1="'+(px-9)+'" y1="'+(GROUND_Y+3)+'" x2="'+(px+9)+'" y2="'+(GROUND_Y+3)+'" stroke="#8a6010" stroke-width="2.5"/>';
+    s += '<line x1="'+(px-6)+'" y1="'+(GROUND_Y+7)+'" x2="'+(px+6)+'" y2="'+(GROUND_Y+7)+'" stroke="#8a6010" stroke-width="2"/>';
+    const compEntries = Object.entries(c).filter(e => e[1] > 0);
+    if (compEntries.length) {
+      const spineEnd = SYM_START + compEntries.length*SYM_ROW - SYM_ROW/2;
+      s += '<line x1="'+px+'" y1="'+(GROUND_Y+14)+'" x2="'+px+'" y2="'+spineEnd+'" stroke="'+EST_COL+'" stroke-width="1.5" opacity="0.25"/>';
+      compEntries.forEach((entry, ri) => {
+        const [cid, cnt] = entry;
+        const isEst = estIds.has(cid);
+        const col = isEst ? EST_COL : NEW_COL;
+        const compObj = S.components.find(cc => cc.id===cid);
+        const label = (compObj?.name || cid).slice(0,17);
+        const sy = SYM_START + ri*SYM_ROW + SYM_BOX/2;
+        const sbX = px + 6, sbY = sy - SYM_BOX/2;
+        s += '<rect x="'+sbX+'" y="'+sbY+'" width="'+SYM_BOX+'" height="'+SYM_BOX+'" rx="4" fill="#0d1520" stroke="'+col+'" stroke-width="1.5"/>';
+        s += makeSym(cid, sbX+SYM_BOX/2, sy, col);
+        const lbX = sbX + SYM_BOX + 6, lbY = sy - 9;
+        s += '<rect x="'+lbX+'" y="'+lbY+'" width="'+LBL_W+'" height="18" rx="3" fill="#0d1520" stroke="'+col+'" stroke-width="1"/>';
+        s += '<text x="'+(lbX+8)+'" y="'+(sy+4)+'" fill="'+col+'" font-size="9" font-weight="bold" font-family="monospace">'+esc(label)+'</text>';
+        const bdX = lbX + LBL_W - 22;
+        s += '<text x="'+(bdX+10)+'" y="'+(sy+4)+'" fill="'+col+'" font-size="9" text-anchor="middle" font-weight="bold" font-family="monospace">×'+cnt+'</text>';
+      });
+    }
+  });
+  s += '</svg>';
+  host.innerHTML = s;
+}
+
+function exportSVG() {
+  const svg = document.getElementById('sld-svg');
+  if (!svg) { toast('⚠ Draw SLD first'); return; }
+  const blob = new Blob([svg.outerHTML], {type:'image/svg+xml'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'SLD_' + today() + '.svg';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('⬇ SVG saved');
+}
+
+function exportPDF() {
+  const svg = document.getElementById('sld-svg');
+  if (!svg) { toast('⚠ Draw SLD first'); return; }
+  const proj = getProjs().find(p => p.id===CUR)?.name || 'Survey';
+  const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SLD - '+proj+'</title><style>body{font-family:monospace;background:#fff;margin:0;padding:16px}h1{font-size:15px;margin-bottom:4px}.wrap{overflow-x:auto;border:1px solid #ccc;padding:6px;border-radius:4px;background:#fff}@page{size:A3 landscape;margin:0.8cm}</style></head><body><h1>SLD — '+proj+'</h1><div class="wrap">'+svg.outerHTML+'</div><script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body></html>';
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if (!w) { const a = document.createElement('a'); a.href = url; a.download = 'SLD_'+today()+'.html'; a.click(); }
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+// ══════════════════════════════════════════════════════
+// REPORT
+// ══════════════════════════════════════════════════════
+function renderReport() {
+  const tot = {};
+  S.components.forEach(c => tot[c.id] = 0);
+  S.poles.forEach(p => Object.entries(p.components||{}).forEach(([k,v]) => { if (tot[k] !== undefined) tot[k] += v; }));
+  const span = S.poles.reduce((a,p) => a + (p.span||0), 0);
+  const areas = new Set(S.poles.map(p => p.location).filter(Boolean));
+  document.getElementById('r-poles').textContent = S.poles.length;
+  document.getElementById('r-span').textContent = span.toFixed(0) + 'm';
+  document.getElementById('r-comps').textContent = Object.values(tot).reduce((a,b) => a+b, 0);
+  document.getElementById('r-areas').textContent = areas.size;
+
+  const bomRows = S.components.filter(c => tot[c.id] > 0 || c.est > 0).map(c => {
+    const used = tot[c.id]||0, est = c.est||0;
+    const badge = est === 0 ? '<span class="badge">—</span>' : used > est ? `<span class="badge ov">+${used-est} OVER</span>` : used < est ? `<span class="badge un">${est-used} LEFT</span>` : '<span class="badge ok">✓ EXACT</span>';
+    return `<tr><td>${esc(c.name)}</td><td>${esc(c.unit)}</td><td style="text-align:right">${est||'—'}</td><td style="color:var(--grn);text-align:right">${used}</td><td>${badge}</td></tr>`;
+  }).join('');
+  document.getElementById('bom-tbl').innerHTML = bomRows ? `<table><thead><tr><th>Component</th><th>Unit</th><th>Est</th><th>Used</th><th>Status</th></tr></thead><tbody>${bomRows}</tbody></table>` : '<div class="empty">No component usage</div>';
+
+  const schRows = S.poles.map((p,i) =>
+    `<tr><td>${i+1}</td><td><b>${esc(p.code)}</b></td><td>${esc(p.location||'—')}</td><td>${p.span?p.span+'m':'—'}</td><td>${p.poleType||'—'}</td><td style="font-size:9px">${p.lat?p.lat.toFixed(5)+'<br>'+p.lng.toFixed(5):'—'}</td><td>${p.acc?'±'+p.acc.toFixed(1)+'m':'—'}</td></tr>`
+  ).join('');
+  document.getElementById('sched-tbl').innerHTML = schRows ? `<table><thead><tr><th>#</th><th>Code</th><th>Location</th><th>Span</th><th>Type</th><th>GPS</th><th>Acc</th></tr></thead><tbody>${schRows}</tbody></table>` : '<div class="empty">No poles recorded</div>';
+}
+
+function expXLSX() {
+  if (!S.poles.length) { toast('⚠ No data'); return; }
+  const tot = {};
+  S.components.forEach(c => tot[c.id] = 0);
+  S.poles.forEach(p => Object.entries(p.components||{}).forEach(([k,v]) => { if (tot[k] !== undefined) tot[k] += v; }));
+  const ids = S.components.map(c => c.id), names = S.components.map(c => c.name);
+  const wb = XLSX.utils.book_new();
+  const schHdr = ['SN','Code','Location','Lat','Lng','GPS Acc(m)','Samples','Span(m)','Type','Connected','Remarks','Recorded',...names];
+  const schData = S.poles.map((p,i) => [i+1, p.code, p.location, p.lat||'', p.lng||'', p.acc?+p.acc.toFixed(1):'', p.samples||'', p.span||'', p.poleType, i===0?'SOURCE':p.connectedToPrev?'YES':'NO', p.remarks||'', p.recordedAt, ...ids.map(id => p.components?.[id]||0)]);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([schHdr, ...schData]), 'Pole Schedule');
+  XLSX.writeFile(wb, 'FieldGrid_' + today() + '.xlsx');
+  toast('⬇ Excel exported');
+}
+
+function dlTemplate() {
+  const csv = '# Components\nName,Estimate Qty,Unit\nPole,15,nos\n\n# Locations\nLocation Name\nArea 1\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'FieldGrid_Template.csv'; a.click();
+  toast('⬇ Template downloaded');
+}
+
+// ══════════════════════════════════════════════════════
+// AI (unchanged)
+// ══════════════════════════════════════════════════════
+function loadKeys() {
+  const gk = lsGet('fg_groq_key', ''), gmk = lsGet('fg_gemini_key', '');
+  if (gk) document.getElementById('groq-key').value = gk;
+  if (gmk) document.getElementById('gemini-key').value = gmk;
+}
+function saveKeys() {
+  const gk = (document.getElementById('groq-key').value||'').trim();
+  const gmk = (document.getElementById('gemini-key').value||'').trim();
+  if (!gk && !gmk) { toast('⚠ Enter at least one key'); return; }
+  if (gk) lsSet('fg_groq_key', gk);
+  if (gmk) lsSet('fg_gemini_key', gmk);
+  toast('💾 Saved'); syncAIStatus();
+}
+async function testKey(provider) {
+  if (provider === 'groq') {
+    const key = (document.getElementById('groq-key').value||'').trim();
+    if (!key) { toast('⚠ Enter Groq key'); return; }
+    const st = document.getElementById('groq-key-st');
+    st.style.display = 'block'; st.className = 'ais ld'; st.textContent = 'Testing…';
+    try {
+      const r = await fetch(GROQ_URL, {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+key}, body:JSON.stringify({model:'llama-3.1-8b-instant',max_tokens:5,messages:[{role:'user',content:'Hi'}]})});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      lsSet('fg_groq_key', key);
+      st.className = 'ais ok'; st.textContent = '✅ Groq connected';
+    } catch(e) { st.className = 'ais er'; st.textContent = '✗ '+e.message; }
+  } else {
+    const key = (document.getElementById('gemini-key').value||'').trim();
+    if (!key) { toast('⚠ Enter Gemini key'); return; }
+    const st = document.getElementById('gemini-key-st');
+    st.style.display = 'block'; st.className = 'ais ld'; st.textContent = 'Testing…';
+    try {
+      const r = await fetch(GEMINI_URL+'?key='+key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:'Hi'}]}]})});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      lsSet('fg_gemini_key', key);
+      st.className = 'ais ok'; st.textContent = '✅ Gemini connected';
+    } catch(e) { st.className = 'ais er'; st.textContent = '✗ '+e.message; }
+  }
+  syncAIStatus();
+}
+function syncAIStatus() {
+  const gk = lsGet('fg_groq_key',''), gmk = lsGet('fg_gemini_key','');
+  const el = document.getElementById('ai-key-summary');
+  if (el) el.innerHTML = (gk?'<span style="color:var(--grn)">✅ Groq</span>':'<span style="color:var(--i3)">○ Groq</span>') + '   ' + (gmk?'<span style="color:var(--grn)">✅ Gemini</span>':'<span style="color:var(--i3)">○ Gemini</span>');
+}
+function setQ(t) { document.getElementById('ai-q').value = t; document.getElementById('ai-q').focus(); }
+function buildCtx() {
+  const tot = {};
+  S.components.forEach(c => tot[c.id] = 0);
+  S.poles.forEach(p => Object.entries(p.components||{}).forEach(([k,v]) => { if (tot[k] !== undefined) tot[k] += v; }));
+  const proj = getProjs().find(p => p.id===CUR)?.name || '—';
+  const span = S.poles.reduce((a,p) => a + (p.span||0), 0).toFixed(0);
+  const bom = S.components.filter(c => tot[c.id] > 0).map(c => c.name+':'+tot[c.id]+c.unit+'(est:'+c.est+')').join('; ');
+  return `LT distribution survey. Project: ${proj}. Poles: ${S.poles.length}, Span: ${span}m. BoM: ${bom}. Answer concisely.`;
+}
+async function askAI() {
+  const provider = document.getElementById('ai-provider').value;
+  const key = provider === 'groq' ? lsGet('fg_groq_key','') : lsGet('fg_gemini_key','');
+  if (!key) { toast('⚠ No '+provider+' key'); return; }
+  const q = (document.getElementById('ai-q').value||'').trim();
+  if (!q) { toast('⚠ Enter question'); return; }
+  const resp = document.getElementById('ai-resp'), btn = document.getElementById('ai-btn');
+  resp.style.display = 'block'; resp.textContent = '…thinking…'; btn.disabled = true;
+  try {
+    if (provider === 'groq') {
+      const r = await fetch(GROQ_URL, {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+key}, body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:700,messages:[{role:'system',content:buildCtx()},{role:'user',content:q}]})});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      resp.textContent = data.choices?.[0]?.message?.content || '(no response)';
+    } else {
+      const r = await fetch(GEMINI_URL+'?key='+key, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({contents:[{parts:[{text:buildCtx()+'\n\nUser: '+q}]}]})});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      resp.textContent = data.candidates?.[0]?.content?.parts?.[0]?.text || '(no response)';
+    }
+  } catch(e) { resp.textContent = '✗ '+e.message; }
+  finally { btn.disabled = false; btn.textContent = '▶'; }
+}
+
+// ══════════════════════════════════════════════════════
+// MISC
+// ══════════════════════════════════════════════════════
+function resetProj() {
+  const projName = getProjs().find(p => p.id===CUR)?.name || 'this project';
+  if (!confirm('Reset ALL data for "'+projName+'"?')) return;
+  try { Object.keys(localStorage).filter(k => k.startsWith('fg_p_'+CUR+'_')).forEach(k => localStorage.removeItem(k)); } catch(e) {}
+  S.poles = []; S.components = JSON.parse(JSON.stringify(DEF_COMPS)); S.locations = []; S.counters = {};
+  S.components.forEach(c => S.counters[c.id] = 0);
+  S.curPhotos = []; S.gpsLocked = false;
+  setUpz('📂', 'Tap to upload estimate file', 'Excel (.xlsx) · Row 6 = locations');
+  const st = document.getElementById('parse-st'); if (st) { st.classList.remove('sh'); st.innerHTML = ''; }
+  renderComps(); renderLocs();
+  if (document.getElementById('pole-list')) renderPoleList();
+  if (mapInitialised) refreshMap();
+  toast('↺ "'+projName+'" reset');
+}
+
+function renderAll() {
+  renderComps(); renderLocs();
+  if (document.getElementById('pole-list')) renderPoleList();
+}
+
+// ══════════════════════════════════════════════════════
+// ▼▼▼ MAP + SLD OVERLAY ▼▼▼
+// ══════════════════════════════════════════════════════
+let leafletMap = null;
+let mapMarkers = [];
+let mapPolylines = [];
+let mapOverlayLayers = [];   // SLD overlay symbols + labels
+let currentTile = null;
+let mapInitialised = false;
+
+const TILE_LAYERS = {
+  osm:  {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr:'&copy; OpenStreetMap'},
+  sat:  {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr:'&copy; Esri'},
+  topo: {url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr:'&copy; OpenTopoMap'}
+};
+
+function poleIcon(poleType, hasGPS) {
+  const col = hasGPS ? (poleType==='existing' ? '#888888' : '#ffce00') : '#ff5544';
+  const inner = {psc:'P',wooden:'W',gi:'G',rcc:'R',existing:'E',corner:'C',terminal:'T',tee:'Y'}[poleType] || 'P';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">
+    <circle cx="16" cy="14" r="13" fill="#0d1520" stroke="${col}" stroke-width="2.5"/>
+    <text x="16" y="19" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="12" fill="${col}">${inner}</text>
+    <line x1="16" y1="27" x2="16" y2="40" stroke="${col}" stroke-width="2"/>
+    <circle cx="16" cy="40" r="2.5" fill="${col}"/>
+  </svg>`;
+  return L.divIcon({html:svg, className:'', iconSize:[32,40], iconAnchor:[16,40], popupAnchor:[0,-42]});
+}
+
+function initMap() {
+  if (mapInitialised) return;
+  if (!document.getElementById('pole-map')) return;
+
+  // Centre on first pole or default to Lumbini
+  let centre = [27.546, 83.057], zoom = 14;
+  const gpsPoles = S.poles.filter(p => p.lat && p.lng);
+  if (gpsPoles.length) { centre = [gpsPoles[0].lat, gpsPoles[0].lng]; zoom = 17; }
+
+  leafletMap = L.map('pole-map', {center:centre, zoom, zoomControl:true, attributionControl:true, preferCanvas:false});
+  currentTile = L.tileLayer(TILE_LAYERS.osm.url, {attribution:TILE_LAYERS.osm.attr, maxZoom:19, crossOrigin:true}).addTo(leafletMap);
+  mapInitialised = true;
+
+  // React to zoom (symbols hide at low zoom for legibility)
+  leafletMap.on('zoomend', refreshOverlays);
+
+  // Click handler — when in pin-pole-target mode, the next click sets that pole's GPS
+  leafletMap.on('click', onMapClick);
+
+  // Overlay toggle listeners
+  ['overlay-symbols','overlay-cables','overlay-labels','overlay-spans'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', refreshMap);
+  });
+
+  refreshMap();
+}
+
+function switchTile(key) {
+  if (!leafletMap) return;
+  if (currentTile) leafletMap.removeLayer(currentTile);
+  currentTile = L.tileLayer(TILE_LAYERS[key].url, {attribution:TILE_LAYERS[key].attr, maxZoom:19, crossOrigin:true}).addTo(leafletMap);
+  ['osm','sat','topo'].forEach(k => {
+    const btn = document.getElementById('tile-'+k+'-btn');
+    if (btn) btn.className = (k===key ? 'btn bA sm' : 'btn bO sm');
+  });
+}
+
+// ── PIN-ON-MAP MODE ──
+// User taps "📍 Pn" in the no-GPS list, then taps anywhere on the map to set its lat/lng.
+let pinPoleTarget = null;   // pole id awaiting location
+let pinPoleCode = null;     // pole code (for display)
+
+function startPinMode(poleId, poleCode) {
+  pinPoleTarget = poleId;
+  pinPoleCode = poleCode;
+  toast('📍 Tap on the map to set location for ' + poleCode, '#ffce00');
+  const mapEl = document.getElementById('pole-map');
+  if (mapEl) mapEl.style.cursor = 'crosshair';
+  refreshMap();   // refresh to update the hint
+}
+
+function cancelPinMode() {
+  pinPoleTarget = null; pinPoleCode = null;
+  const mapEl = document.getElementById('pole-map');
+  if (mapEl) mapEl.style.cursor = '';
+  refreshMap();
+}
+
+function onMapClick(e) {
+  if (!pinPoleTarget) return;
+  const pole = S.poles.find(p => p.id === pinPoleTarget);
+  if (!pole) { cancelPinMode(); return; }
+  pole.lat = +e.latlng.lat.toFixed(7);
+  pole.lng = +e.latlng.lng.toFixed(7);
+  pole.acc = pole.acc || null;   // unknown — manually pinned
+  pole.pinnedManually = true;
+
+  // Recompute span if there's a previous pole with GPS
+  const idx = S.poles.indexOf(pole);
+  if (idx > 0) {
+    const prev = S.poles[idx - 1];
+    if (prev.lat && prev.lng && pole.connectedToPrev !== false) {
+      pole.span = +haversine(prev.lat, prev.lng, pole.lat, pole.lng).toFixed(1);
+    }
+  }
+  // Also update next pole's span if it has GPS
+  if (idx < S.poles.length - 1) {
+    const nxt = S.poles[idx + 1];
+    if (nxt.lat && nxt.lng && nxt.connectedToPrev !== false) {
+      nxt.span = +haversine(pole.lat, pole.lng, nxt.lat, nxt.lng).toFixed(1);
+    }
+  }
+  pSet('poles', S.poles);
+  toast('📍 ' + pinPoleCode + ' pinned at ' + pole.lat.toFixed(5) + ', ' + pole.lng.toFixed(5), '#00d4a4');
+  if (navigator.vibrate) navigator.vibrate(40);
+  pinPoleTarget = null; pinPoleCode = null;
+  const mapEl = document.getElementById('pole-map');
+  if (mapEl) mapEl.style.cursor = '';
+  refreshMap();
+  renderPoleList();
+}
+
+function refreshMap() {
+  if (!leafletMap) return;
+  // Clear existing
+  mapMarkers.forEach(m => leafletMap.removeLayer(m));
+  mapPolylines.forEach(p => leafletMap.removeLayer(p));
+  mapOverlayLayers.forEach(l => leafletMap.removeLayer(l));
+  mapMarkers = []; mapPolylines = []; mapOverlayLayers = [];
+
+  const polesWithGPS = S.poles.filter(p => p.lat && p.lng);
+  const polesWithoutGPS = S.poles.filter(p => !p.lat || !p.lng);
+
+  const noGPS = document.getElementById('no-gps-poles');
+  if (noGPS) {
+    if (polesWithoutGPS.length) {
+      noGPS.style.display = 'block';
+      const pinHint = pinPoleTarget ? '<div style="color:var(--acc);font-size:11px;margin-top:6px;font-weight:700">📍 Tap anywhere on the map to set location for <b>'+esc(pinPoleTarget)+'</b> · <a href="#" onclick="cancelPinMode();return false" style="color:var(--warn)">cancel</a></div>' : '';
+      noGPS.innerHTML =
+        '<div style="font-weight:700;margin-bottom:6px">⚠ ' + polesWithoutGPS.length + ' pole(s) with no GPS — tap to drop pin on map:</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+          polesWithoutGPS.map(p =>
+            '<button class="btn bO sm" style="padding:6px 10px;font-size:11px" onclick="startPinMode(\''+esc(p.id)+'\',\''+esc(p.code)+'\')">📍 '+esc(p.code)+' @ '+esc(p.location||'?')+'</button>'
+          ).join('') +
+        '</div>' + pinHint;
+    } else noGPS.style.display = 'none';
+  }
+
+  // Update badge to show both counts honestly
+  const badge = document.getElementById('map-stats-badge');
+  if (badge) {
+    badge.innerHTML = '<b>'+polesWithGPS.length+'</b> on map' + (polesWithoutGPS.length ? ' · <b style="color:var(--warn)">'+polesWithoutGPS.length+'</b> need pin' : '');
+  }
+
+  if (!polesWithGPS.length) {
+    // Still nothing to draw, but the no-GPS list above gives the user a path forward.
+    return;
+  }
+
+  const showCables = document.getElementById('overlay-cables').checked;
+  const showSymbols = document.getElementById('overlay-symbols').checked;
+  const showLabels = document.getElementById('overlay-labels').checked;
+  const showSpans = document.getElementById('overlay-spans').checked;
+
+  // ── CABLE LINES between poles ──
+  if (showCables) {
+    for (let i = 1; i < S.poles.length; i++) {
+      const prev = S.poles[i-1], cur = S.poles[i];
+      if (!prev.lat || !prev.lng || !cur.lat || !cur.lng) continue;
+      if (cur.connectedToPrev === false) continue;
+      const lineCol = cur.poleType === 'existing' ? '#888888' : NEW_COL;
+      // Shadow line for visibility on satellite
+      const shadow = L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]], {color:'#000', weight:6, opacity:.4}).addTo(leafletMap);
+      const polyline = L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]], {color:lineCol, weight:3.5, opacity:.95}).addTo(leafletMap);
+      mapPolylines.push(shadow, polyline);
+
+      const cb = dominantCable(cur.components || {});
+      if (showSpans && (cb !== '—' || cur.span)) {
+        const midLat = (prev.lat + cur.lat) / 2;
+        const midLng = (prev.lng + cur.lng) / 2;
+        const spanTxt = cur.span ? cur.span+'m' : '';
+        const cableTxt = cb !== '—' ? cb : '';
+        const lbl = [spanTxt, cableTxt].filter(Boolean).join(' · ');
+        const lblMarker = L.marker([midLat,midLng], {
+          icon: L.divIcon({
+            html: '<div style="background:rgba(10,10,10,.85);border:1px solid '+NEW_COL+';border-radius:4px;padding:2px 6px;font-size:10px;color:'+NEW_COL+';white-space:nowrap;font-family:monospace;font-weight:700">'+esc(lbl)+'</div>',
+            className:'', iconAnchor:[30,10]
+          }),
+          interactive: false
+        }).addTo(leafletMap);
+        mapOverlayLayers.push(lblMarker);
+      }
+    }
+  }
+
+  // ── POLE MARKERS ──
+  const estIds = new Set(S.components.filter(c => c.est > 0).map(c => c.id));
+
+  polesWithGPS.forEach(p => {
+    const compEntries = Object.entries(p.components||{}).filter(e => e[1] > 0);
+    const compHTML = compEntries.map(e => {
+      const name = S.components.find(c => c.id===e[0])?.name || e[0];
+      return '<span class="pole-popup-comp">'+esc(name)+' ×'+e[1]+'</span>';
+    }).join('');
+
+    const popupHTML =
+      '<div class="pole-popup-code">'+esc(p.code)+'</div>' +
+      '<div class="pole-popup-row"><b>'+esc(p.location||'—')+'</b> · '+(p.poleType||'—')+(p.span?' · '+p.span+'m':'')+'</div>' +
+      '<div class="pole-popup-row" style="font-size:10px">📍 '+p.lat.toFixed(6)+', '+p.lng.toFixed(6)+(p.acc?' ±'+p.acc.toFixed(1)+'m':'')+(p.samples?' ('+p.samples+' samples)':'')+'</div>' +
+      (p.remarks ? '<div class="pole-popup-row" style="margin-top:3px;font-style:italic">'+esc(p.remarks)+'</div>' : '') +
+      (compHTML ? '<div style="margin-top:5px;line-height:1.8">'+compHTML+'</div>' : '');
+
+    const marker = L.marker([p.lat, p.lng], {icon:poleIcon(p.poleType, true)}).bindPopup(popupHTML, {maxWidth:280,minWidth:200}).addTo(leafletMap);
+    mapMarkers.push(marker);
+
+    // ── SLD SYMBOL CLUSTER beside each pole ──
+    if (showSymbols && compEntries.length) {
+      // Build mini-HTML symbol overlay
+      const items = compEntries.slice(0, 6);  // top 6 components to avoid clutter
+      const hasNew = items.some(([cid]) => !estIds.has(cid));
+      const compCount = items.map(([cid, n]) => {
+        const name = S.components.find(c => c.id===cid)?.name || cid;
+        const isEst = estIds.has(cid);
+        const short = name.length > 14 ? name.slice(0,13)+'…' : name;
+        return '<div class="row"><span class="ic" style="color:'+(isEst?EST_COL:NEW_COL)+'">'+(COMP_GLYPH[cid]||'■')+'</span><span>'+esc(short)+' <b>×'+n+'</b></span></div>';
+      }).join('');
+      const more = compEntries.length > 6 ? '<div style="color:var(--i3);font-size:8px;margin-top:2px">+'+(compEntries.length-6)+' more</div>' : '';
+      const cls = hasNew ? 'sld-overlay-symbol new' : 'sld-overlay-symbol';
+      const ttl = showLabels ? '<div class="ttl">'+esc(p.code)+'</div>' : '';
+      const overlayHTML = '<div class="'+cls+'">'+ttl+compCount+more+'</div>';
+      const symMarker = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({html:overlayHTML, className:'', iconAnchor:[-18, 30]}),  // offset to upper-right of pole
+        interactive: false,
+        zIndexOffset: -100
+      }).addTo(leafletMap);
+      mapOverlayLayers.push(symMarker);
+    } else if (showLabels && !showSymbols) {
+      // Just the code label
+      const codeMarker = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          html:'<div style="background:rgba(10,10,10,.85);border:1px solid '+EST_COL+';border-radius:4px;padding:2px 6px;font-size:11px;color:'+EST_COL+';font-family:monospace;font-weight:700;white-space:nowrap">'+esc(p.code)+'</div>',
+          className:'', iconAnchor:[-18, 30]
+        }),
+        interactive: false,
+        zIndexOffset: -100
+      }).addTo(leafletMap);
+      mapOverlayLayers.push(codeMarker);
+    }
+  });
+
+  const totalSpan = S.poles.reduce((a,p) => a + (p.span||0), 0);
+  const missing = S.poles.length - polesWithGPS.length;
+  let badgeHtml = '<b>'+polesWithGPS.length+'</b>/'+S.poles.length+' poles · <b>'+totalSpan.toFixed(0)+'m</b>';
+  if (missing) badgeHtml += ' · <b style="color:var(--warn)">'+missing+' need pin</b>';
+  document.getElementById('map-stats-badge').innerHTML = badgeHtml;
+
+  fitMapToPoles();
+}
+
+function refreshOverlays() {
+  // Future: hide labels at low zoom
+}
+
+function fitMapToPoles() {
+  const pts = S.poles.filter(p => p.lat && p.lng).map(p => [p.lat, p.lng]);
+  if (!pts.length || !leafletMap) return;
+  if (pts.length === 1) { leafletMap.setView(pts[0], 17); return; }
+  leafletMap.fitBounds(L.latLngBounds(pts), {padding:[40,40], maxZoom:18});
+}
+
+function switchSLDTab(tab) {
+  document.getElementById('sld-map-panel').style.display = tab==='map' ? 'block' : 'none';
+  document.getElementById('sld-diag-panel').style.display = tab==='sld' ? 'block' : 'none';
+  document.getElementById('sld-both-panel').style.display = tab==='both' ? 'block' : 'none';
+  ['map','sld','both'].forEach(t => {
+    const b = document.getElementById('tab-'+t+'-btn');
+    if (b) b.classList.toggle('on', t===tab);
+  });
+  if (tab === 'map') {
+    if (!mapInitialised) initMap();
+    else { leafletMap.invalidateSize(); refreshMap(); }
+  }
+  if (tab === 'sld') { populateSLDSels(); renderSLD(); }
+}
+
+// ══════════════════════════════════════════════════════
+// ▼▼▼ DOWNLOAD MAP + SLD AS PNG ▼▼▼
+// ══════════════════════════════════════════════════════
+async function downloadMapPNG() {
+  const btn = document.getElementById('map-png-btn');
+  if (!leafletMap) { toast('⚠ Open map first'); return; }
+  const polesWithGPS = S.poles.filter(p => p.lat && p.lng);
+  if (!polesWithGPS.length) { toast('⚠ No poles with GPS'); return; }
+
+  const orig = btn.innerHTML;
+  btn.innerHTML = '⏳ Rendering…';
+  btn.disabled = true;
+
+  try {
+    // Force overlays to refresh
+    refreshMap();
+    await new Promise(r => setTimeout(r, 600));
+
+    const mapEl = document.getElementById('pole-map');
+    // Wait for tiles to settle
+    await waitForTiles();
+
+    // Capture
+    const canvas = await html2canvas(mapEl, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: '#0d1520',
+      logging: false,
+      // Skip elements that html2canvas can't render
+      ignoreElements: el => el.classList?.contains('leaflet-control-attribution') === false ? false : false
+    });
+
+    // Composite: add title bar + legend on top of map screenshot
+    const proj = getProjs().find(p => p.id===CUR)?.name || 'Survey';
+    const dateStr = today();
+    const composite = document.createElement('canvas');
+    const W = canvas.width;
+    const headerH = 80;
+    const footerH = 60;
+    composite.width = W;
+    composite.height = canvas.height + headerH + footerH;
+    const ctx = composite.getContext('2d');
+
+    // Header background
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, W, headerH);
+    // Yellow accent line
+    ctx.fillStyle = EST_COL;
+    ctx.fillRect(0, headerH-3, W, 3);
+    // Title
+    ctx.fillStyle = EST_COL;
+    ctx.font = 'bold 32px monospace';
+    ctx.textBaseline = 'top';
+    ctx.fillText('⚡ FieldGrid — SLD on Map', 24, 14);
+    ctx.fillStyle = '#a0a098';
+    ctx.font = '16px monospace';
+    ctx.fillText(proj + '  ·  ' + polesWithGPS.length + ' poles  ·  ' + S.poles.reduce((a,p)=>a+(p.span||0),0).toFixed(0) + 'm  ·  ' + dateStr, 24, 50);
+
+    // Map image
+    ctx.drawImage(canvas, 0, headerH);
+
+    // Footer with legend
+    const footerY = headerH + canvas.height;
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, footerY, W, footerH);
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(0, footerY, W, 2);
+
+    ctx.font = '14px monospace';
+    ctx.fillStyle = NEW_COL;
+    ctx.fillRect(24, footerY + 22, 14, 14);
+    ctx.fillStyle = '#a0a098';
+    ctx.fillText('New / Unplanned', 46, footerY + 20);
+
+    ctx.fillStyle = EST_COL;
+    ctx.fillRect(220, footerY + 22, 14, 14);
+    ctx.fillStyle = '#a0a098';
+    ctx.fillText('Estimated', 242, footerY + 20);
+
+    ctx.fillStyle = '#888';
+    ctx.fillRect(380, footerY + 22, 14, 14);
+    ctx.fillStyle = '#a0a098';
+    ctx.fillText('Existing', 402, footerY + 20);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#5c5c54';
+    ctx.font = '12px monospace';
+    ctx.fillText('Generated by FieldGrid Pro · ' + new Date().toISOString(), W - 24, footerY + 22);
+    ctx.textAlign = 'left';
+
+    // Download
+    composite.toBlob(blob => {
+      if (!blob) { toast('⚠ Capture failed'); return; }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'FieldGrid_Map_SLD_' + proj.replace(/[^a-z0-9]/gi,'_') + '_' + dateStr + '.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('⬇ PNG saved · ' + (blob.size/1024).toFixed(0) + 'KB', '#00d4a4');
+    }, 'image/png', 0.95);
+
+  } catch(e) {
+    console.error('PNG export error:', e);
+    toast('⚠ ' + e.message.slice(0, 60));
+  } finally {
+    btn.innerHTML = orig;
+    btn.disabled = false;
+  }
+}
+
+// Wait for visible map tiles to load
+function waitForTiles(maxMs = 4000) {
+  return new Promise(resolve => {
+    const start = Date.now();
+    const check = () => {
+      const tiles = document.querySelectorAll('#pole-map .leaflet-tile');
+      const total = tiles.length;
+      let loaded = 0;
+      tiles.forEach(t => { if (t.complete && t.naturalWidth > 0) loaded++; });
+      if (total > 0 && loaded === total) { setTimeout(resolve, 200); return; }
+      if (Date.now() - start > maxMs) { resolve(); return; }
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
+
+// Combined PDF export (Map+SLD overlay → page 1, pure SLD → page 2, schedule → page 3)
+async function exportCombinedPDF() {
+  const btn = document.getElementById('export-combined-pdf-btn');
+  if (btn) { btn.textContent = '⏳ Generating…'; btn.disabled = true; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
+    const proj = getProjs().find(p => p.id===CUR)?.name || 'Survey';
+    const dateStr = today();
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+
+    // Page 1: Map+SLD
+    switchSLDTab('map');
+    await new Promise(r => setTimeout(r, 800));
+    if (leafletMap) leafletMap.invalidateSize();
+    await waitForTiles();
+
+    const mapEl = document.getElementById('pole-map');
+    if (mapEl) {
+      try {
+        const mapCanvas = await html2canvas(mapEl, {useCORS:true, allowTaint:true, scale:2, backgroundColor:'#0a0e14', logging:false});
+        const mapImg = mapCanvas.toDataURL('image/jpeg', 0.92);
+        doc.setFillColor(10,10,10); doc.rect(0,0,W,H,'F');
+        doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(255,206,0);
+        doc.text('FieldGrid — ' + proj, 10, 10);
+        doc.setFontSize(9); doc.setTextColor(160,160,152);
+        doc.text('Map + SLD Overlay · ' + dateStr + ' · ' + S.poles.length + ' poles', 10, 17);
+        doc.addImage(mapImg, 'JPEG', 0, 22, W, H-26);
+      } catch(e) { console.error(e); }
+    }
+
+    // Page 2: Pure SLD
+    doc.addPage();
+    switchSLDTab('sld');
+    populateSLDSels(); renderSLD();
+    await new Promise(r => setTimeout(r, 400));
+    const sldHost = document.getElementById('sld-host');
+    if (document.getElementById('sld-svg')) {
+      try {
+        const sldCanvas = await html2canvas(sldHost, {scale:1.5, backgroundColor:'#0a0e14', logging:false});
+        const sldImg = sldCanvas.toDataURL('image/jpeg', 0.90);
+        doc.setFillColor(10,10,10); doc.rect(0,0,W,H,'F');
+        doc.setFontSize(12); doc.setTextColor(255,206,0);
+        doc.text('Single Line Diagram — ' + proj, 10, 10);
+        doc.setFontSize(8); doc.setTextColor(160,160,152);
+        doc.text('IEEE-style · Yellow=Estimated · Green=New · ' + dateStr, 10, 17);
+        doc.addImage(sldImg, 'JPEG', 0, 22, W, H-26);
+      } catch(e) { console.error(e); }
+    }
+
+    // Page 3: Schedule
+    doc.addPage();
+    doc.setFillColor(10,10,10); doc.rect(0,0,W,H,'F');
+    doc.setFontSize(13); doc.setTextColor(255,206,0);
+    doc.text('Pole Schedule — ' + proj, 10, 12);
+    doc.setFontSize(8); doc.setTextColor(160,160,152);
+    doc.text(dateStr + ' · ' + S.poles.length + ' poles', 10, 19);
+
+    const cols = ['Code','Location','Type','Span','Lat','Lng','Acc','Connected'];
+    const colW = [16,40,16,14,28,28,16,20];
+    const startX = 8, rowH = 7, startY = 26;
+    let x = startX;
+    doc.setFontSize(7);
+    cols.forEach((c,i) => {
+      doc.setFillColor(25,30,20); doc.rect(x, startY, colW[i], rowH, 'F');
+      doc.setTextColor(160,160,100); doc.text(c, x+2, startY+5);
+      x += colW[i];
+    });
+    let y = startY + rowH;
+    S.poles.forEach((p, idx) => {
+      if (y > H - 10) { doc.addPage(); doc.setFillColor(10,10,10); doc.rect(0,0,W,H,'F'); y = 15; }
+      x = startX;
+      const isOdd = idx % 2 === 0;
+      doc.setFillColor(isOdd?15:20, isOdd?18:24, isOdd?14:18);
+      doc.rect(startX, y, colW.reduce((a,b)=>a+b,0), rowH, 'F');
+      const row = [p.code, (p.location||'—').slice(0,22), p.poleType||'—', p.span?p.span+'m':'—', p.lat?p.lat.toFixed(5):'—', p.lng?p.lng.toFixed(5):'—', p.acc?'±'+p.acc.toFixed(1):'—', idx===0?'SOURCE':p.connectedToPrev?'YES':'NO'];
+      doc.setFontSize(7); doc.setTextColor(200,200,190);
+      row.forEach((val,i) => { doc.text(String(val), x+2, y+5); x += colW[i]; });
+      y += rowH;
+    });
+
+    const filename = 'FieldGrid_' + proj.replace(/[^a-z0-9]/gi,'_') + '_' + dateStr + '.pdf';
+    doc.save(filename);
+    toast('⬇ PDF saved', '#00d4a4');
+  } catch(err) {
+    toast('⚠ PDF error: ' + err.message.slice(0,50));
+    console.error(err);
+  } finally {
+    if (btn) { btn.textContent = '⬇ Export Combined PDF'; btn.disabled = false; }
+    switchSLDTab('map');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════
+function init() {
+  initProjects();
+  if (getProjs().length) { loadState(); renderAll(); loadKeys(); syncAIStatus(); }
+
+  function wire(id, fn) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('click', fn);
+      el.addEventListener('touchend', e => { e.preventDefault(); fn(); }, {passive:false});
+    }
+  }
+
+  wire('reset-proj-btn', resetProj);
+  wire('rec-reset-btn', resetRecordSession);
+  wire('report-reset-btn', resetProj);
+
+  wire('gps-req-btn', startHighPrecisionGPS);
+  wire('gps-pill', startHighPrecisionGPS);
+  wire('gps-manual-toggle-btn', toggleManualGPS);
+  wire('set-manual-gps-btn', setManualGPS);
+
+  wire('tab-map-btn', () => switchSLDTab('map'));
+  wire('tab-sld-btn', () => switchSLDTab('sld'));
+  wire('tab-both-btn', () => switchSLDTab('both'));
+  wire('tile-osm-btn', () => switchTile('osm'));
+  wire('tile-sat-btn', () => switchTile('sat'));
+  wire('tile-topo-btn', () => switchTile('topo'));
+  wire('map-fit-btn', fitMapToPoles);
+  wire('map-png-btn', downloadMapPNG);
+  wire('map-pdf-btn', () => switchSLDTab('both'));
+  wire('export-combined-pdf-btn', exportCombinedPDF);
+
+  // Cache controls
+  wire('cache-now-btn', async () => {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      toast('✓ Already cached — assets ready offline', '#00d4a4');
+    } else {
+      toast('⚠ SW not active yet — reload page once');
+    }
+  });
+  wire('clear-cache-btn', async () => {
+    if (!confirm('Clear offline cache?')) return;
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage('CLEAR_CACHE');
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    toast('🗑 Cache cleared');
+  });
+
+  document.getElementById('modal-proj-name')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createProjectFromModal(); }
+  });
+  document.getElementById('new-proj-name')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createProject(); }
+    if (e.key === 'Escape') toggleNewProj();
+  });
+  document.getElementById('ai-q')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAI(); }
+  });
+
+  photoDB.open().catch(e => console.warn(e));
+  registerSW();
+  updateOfflineDot();
+}
+
+init();
+</script>
+</body>
+</html>
