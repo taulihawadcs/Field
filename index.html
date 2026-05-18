@@ -571,21 +571,21 @@ td b{color:var(--acc);font-family:var(--D)}
     <!-- SLD-on-Map toggles -->
     <div style="background:var(--p2);border:1px solid var(--line);border-radius:var(--r);padding:10px;margin-bottom:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <span style="font-family:var(--D);font-size:12px;color:var(--acc)">SLD Overlay</span>
-        <span style="font-size:10px;color:var(--i3)">draw SLD symbols on map</span>
+        <span style="font-family:var(--D);font-size:12px;color:var(--acc)">Map Overlay</span>
+        <span style="font-size:10px;color:var(--i3)">physical poles with components</span>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
-          <input type="checkbox" id="overlay-symbols" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Symbols
+          <input type="checkbox" id="overlay-symbols" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Pole drawing
         </label>
         <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
           <input type="checkbox" id="overlay-cables" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--grn)"> Cables
         </label>
         <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
-          <input type="checkbox" id="overlay-labels" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--ink)"> Labels
+          <input type="checkbox" id="overlay-labels" checked style="width:auto;min-height:auto;margin:0;accent-color:var(--ink)"> Code labels
         </label>
         <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
-          <input type="checkbox" id="overlay-spans" style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Spans
+          <input type="checkbox" id="overlay-spans" style="width:auto;min-height:auto;margin:0;accent-color:var(--acc)"> Span lengths
         </label>
       </div>
     </div>
@@ -2433,24 +2433,180 @@ const TILE_LAYERS = {
   topo: {url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr:'&copy; OpenTopoMap'}
 };
 
-function poleIcon(poleType, hasGPS, gpsSource) {
-  // Slim, high-contrast pole marker.
-  // TwoNav-sourced poles get a BLUE fill to distinguish from phone GPS.
-  let fillCol;
-  if (!hasGPS) fillCol = '#ff5544';
-  else if (gpsSource === 'twonav') fillCol = '#4a9eff';
-  else if (poleType === 'existing') fillCol = '#bbbbbb';
-  else fillCol = '#ffce00';
-  const inner = {psc:'P',wooden:'W',gi:'G',rcc:'R',existing:'E',corner:'C',terminal:'T',tee:'Y'}[poleType] || 'P';
-  // Smaller footprint: 22×30 viewport, 9px circle radius.
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30">
-    <circle cx="11" cy="10" r="9.5" fill="#000" opacity="0.45"/>
-    <circle cx="11" cy="10" r="8" fill="${fillCol}" stroke="#000" stroke-width="2"/>
-    <text x="11" y="14" text-anchor="middle" font-family="monospace" font-weight="900" font-size="10" fill="#000">${inner}</text>
-    <line x1="11" y1="18" x2="11" y2="29" stroke="#000" stroke-width="3"/>
-    <line x1="11" y1="18" x2="11" y2="29" stroke="${fillCol}" stroke-width="1.5"/>
+// ══════════════════════════════════════════════════════
+// REALISTIC POLE RENDERING ON MAP
+// Draws an actual physical-looking pole at each location: vertical shaft,
+// cross-arm with insulators, components attached at anatomically correct
+// heights (cutouts hanging below arm, lightning arrester on top, stay
+// diagonal to ground anchor, earth rod into ground). The pole BASE sits
+// at the pole's lat/lng coordinate.
+// ══════════════════════════════════════════════════════
+function poleIcon(poleType, hasGPS, gpsSource, components) {
+  components = components || {};
+  // Pole shaft colour by type — concrete grey for PSC/RCC, brown for wooden,
+  // dark grey for GI/steel, slightly dim grey if marked existing.
+  const isExisting = poleType === 'existing';
+  let shaftCol;
+  if (!hasGPS) shaftCol = '#ff5544';
+  else if (isExisting) shaftCol = '#888';
+  else if (poleType === 'wooden') shaftCol = '#8b6240';
+  else if (poleType === 'gi') shaftCol = '#5a5a5a';
+  else shaftCol = '#9a9a9a';   // concrete (PSC/RCC default)
+
+  const tintRing = gpsSource === 'twonav' ? '#4a9eff' : (gpsSource === 'pinned' ? '#ffce00' : (gpsSource === 'manual' ? '#a78bfa' : '#cccccc'));
+
+  // Canvas dimensions: 56 wide × 100 tall. Pole BASE is at (28, 95).
+  // Top of pole at y=20. Cross-arm at y=28.
+  const W = 56, H = 100;
+  const BX = 28, BASE = 95;       // base x/y
+  const TOP = 22;                  // top of pole shaft
+  const ARM_Y = 30;                // cross-arm height
+  const ARM_LEN = 16;              // half-length
+  const SHAFT_W_TOP = 2.4;
+  const SHAFT_W_BOT = 4.5;
+
+  // Determine which structural pieces to draw based on components present.
+  // We're permissive: anything that "should" be on a real pole gets drawn if
+  // its component count is > 0. Multiple of same → drawn side-by-side.
+  const has = (id) => (components[id]||0) > 0;
+  const cnt = (id) => components[id]||0;
+
+  // Whether to show cross-arm (always if any insul/cutout/etc present, or if cross_arm itself counted)
+  const showArm = has('cross_arm') || has('disc_insul') || has('pin_insul') || has('fuse_cutout') || has('pg_clamp') || has('connector_ipc') || cnt('conductor') > 0;
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">`;
+  // Drop shadow on ground (gives the "standing on map" feel)
+  svg += `<ellipse cx="${BX}" cy="${BASE+2}" rx="9" ry="2.5" fill="#000" opacity="0.45"/>`;
+
+  // ── Earth rod (drawn first so other things layer over base) ──
+  if (has('earth_rod')) {
+    svg += `<line x1="${BX-3}" y1="${BASE}" x2="${BX-3}" y2="${BASE+10}" stroke="#1a4a8a" stroke-width="1.5"/>`;
+    svg += `<line x1="${BX-5}" y1="${BASE+10}" x2="${BX-1}" y2="${BASE+10}" stroke="#1a4a8a" stroke-width="1.5"/>`;
+    svg += `<line x1="${BX-4}" y1="${BASE+13}" x2="${BX-2}" y2="${BASE+13}" stroke="#1a4a8a" stroke-width="1.5"/>`;
+  }
+
+  // ── Pole shaft: tapered, with subtle highlight to look 3D ──
+  // Outline first (dark) then fill
+  svg += `<polygon points="${BX-SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_BOT},${BASE} ${BX-SHAFT_W_BOT},${BASE}" fill="${shaftCol}" stroke="#000" stroke-width="1.2" ${isExisting?'stroke-dasharray="3,2"':''}/>`;
+  // Highlight stripe on right edge to suggest cylindrical
+  svg += `<polygon points="${BX+SHAFT_W_TOP*0.4},${TOP} ${BX+SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_BOT},${BASE} ${BX+SHAFT_W_BOT*0.4},${BASE}" fill="#fff" opacity="0.15"/>`;
+
+  // ── Cross-arm (horizontal beam) ──
+  if (showArm) {
+    // beam
+    svg += `<rect x="${BX-ARM_LEN}" y="${ARM_Y-1.8}" width="${ARM_LEN*2}" height="3.5" rx="0.5" fill="#555" stroke="#000" stroke-width="0.8"/>`;
+    // mounting bolt on pole
+    svg += `<circle cx="${BX}" cy="${ARM_Y}" r="1.2" fill="#222"/>`;
+  }
+
+  // ── Insulators on cross-arm ──
+  // Position up to 3 insulators evenly: left, center, right
+  const insulCount = Math.min(3, cnt('disc_insul') + cnt('pin_insul'));
+  if (insulCount > 0 && showArm) {
+    const positions = insulCount === 1 ? [BX] :
+                      insulCount === 2 ? [BX-9, BX+9] :
+                      [BX-11, BX, BX+11];
+    positions.forEach(ix => {
+      // Insulator: white porcelain disc on a short stub
+      svg += `<line x1="${ix}" y1="${ARM_Y-2}" x2="${ix}" y2="${ARM_Y-5}" stroke="#333" stroke-width="0.8"/>`;
+      svg += `<ellipse cx="${ix}" cy="${ARM_Y-6}" rx="2.2" ry="1" fill="#fff" stroke="#444" stroke-width="0.5"/>`;
+      svg += `<ellipse cx="${ix}" cy="${ARM_Y-7.8}" rx="1.7" ry="0.8" fill="#fff" stroke="#444" stroke-width="0.5"/>`;
+      svg += `<ellipse cx="${ix}" cy="${ARM_Y-9.4}" rx="1.3" ry="0.7" fill="#fff" stroke="#444" stroke-width="0.5"/>`;
+    });
+  }
+
+  // ── Lightning arrester (on top of pole, looks like a stack of small discs) ──
+  if (has('lightning_arr')) {
+    svg += `<line x1="${BX}" y1="${TOP}" x2="${BX}" y2="${TOP-8}" stroke="#222" stroke-width="1"/>`;
+    svg += `<rect x="${BX-2}" y="${TOP-12}" width="4" height="5" fill="#ddd" stroke="#000" stroke-width="0.6"/>`;
+    svg += `<polygon points="${BX-3},${TOP-12} ${BX+3},${TOP-12} ${BX},${TOP-16}" fill="#ffce00" stroke="#000" stroke-width="0.6"/>`;
+  }
+
+  // ── Fuse cutouts (DDLA) — hanging from cross-arm. Drawn as long thin orange drums ──
+  const cutoutN = cnt('fuse_cutout');
+  if (cutoutN > 0 && showArm) {
+    const positions = cutoutN === 1 ? [BX+6] :
+                      cutoutN === 2 ? [BX-6, BX+6] :
+                      [BX-8, BX, BX+8];
+    positions.slice(0, 3).forEach(ix => {
+      // Mounting bracket
+      svg += `<line x1="${ix}" y1="${ARM_Y+2}" x2="${ix}" y2="${ARM_Y+5}" stroke="#222" stroke-width="0.8"/>`;
+      // Drum body
+      svg += `<rect x="${ix-1.6}" y="${ARM_Y+5}" width="3.2" height="9" rx="0.5" fill="#d97706" stroke="#000" stroke-width="0.6"/>`;
+      // Top and bottom caps
+      svg += `<rect x="${ix-2}" y="${ARM_Y+4}" width="4" height="1.5" fill="#222"/>`;
+      svg += `<rect x="${ix-2}" y="${ARM_Y+13.5}" width="4" height="1.5" fill="#222"/>`;
+    });
+  }
+
+  // ── Anchor clamp / suspension clamp — bracket attached to pole below arm ──
+  if (has('anchor_clamp') || has('susp_clamp')) {
+    svg += `<rect x="${BX-3.5}" y="${ARM_Y+18}" width="7" height="3" rx="0.5" fill="#666" stroke="#000" stroke-width="0.6"/>`;
+    svg += `<circle cx="${BX-2}" cy="${ARM_Y+19.5}" r="0.7" fill="#222"/>`;
+    svg += `<circle cx="${BX+2}" cy="${ARM_Y+19.5}" r="0.7" fill="#222"/>`;
+  }
+
+  // ── D-iron (heavy-duty bracket for terminal pole) ──
+  if (has('d_iron')) {
+    svg += `<path d="M ${BX-5},${ARM_Y+24} L ${BX-5},${ARM_Y+30} L ${BX+5},${ARM_Y+30} L ${BX+5},${ARM_Y+24}" fill="none" stroke="#444" stroke-width="1.5" stroke-linejoin="miter"/>`;
+  }
+
+  // ── PG clamp / connector — small bolted dot on cross-arm ──
+  if (has('pg_clamp') || has('connector_ipc')) {
+    svg += `<circle cx="${BX-13}" cy="${ARM_Y}" r="1.8" fill="#c0392b" stroke="#000" stroke-width="0.5"/>`;
+  }
+
+  // ── I-bolt — eyebolt through pole midshaft ──
+  if (has('i_bolt')) {
+    svg += `<circle cx="${BX-4}" cy="${ARM_Y+38}" r="1.2" fill="none" stroke="#555" stroke-width="0.7"/>`;
+    svg += `<line x1="${BX-4}" y1="${ARM_Y+38}" x2="${BX}" y2="${ARM_Y+38}" stroke="#555" stroke-width="0.7"/>`;
+  }
+
+  // ── Stay wire — diagonal from upper pole to ground anchor ──
+  if (has('lt_stay') || has('stay_wire')) {
+    const stayEndX = BX + 18, stayEndY = BASE - 1;
+    svg += `<line x1="${BX+1}" y1="${ARM_Y+4}" x2="${stayEndX}" y2="${stayEndY}" stroke="#3a3a3a" stroke-width="1.5"/>`;
+    // Insulator on stay wire (small white disc midway)
+    const sIx = (BX + stayEndX) / 2, sIy = (ARM_Y + 4 + stayEndY) / 2;
+    svg += `<ellipse cx="${sIx}" cy="${sIy}" rx="1.5" ry="0.8" fill="#fff" stroke="#444" stroke-width="0.5"/>`;
+    // Ground anchor block
+    svg += `<rect x="${stayEndX-2}" y="${stayEndY-1}" width="4" height="3" fill="#444" stroke="#000" stroke-width="0.5"/>`;
+  }
+
+  // ── Distribution conductor "ends" on cross-arm tips ──
+  if (cnt('conductor') > 0 && showArm) {
+    svg += `<circle cx="${BX-ARM_LEN}" cy="${ARM_Y}" r="1.4" fill="#222"/>`;
+    svg += `<circle cx="${BX+ARM_LEN}" cy="${ARM_Y}" r="1.4" fill="#222"/>`;
+  }
+
+  // ── GPS-source indicator ring at base ──
+  svg += `<circle cx="${BX}" cy="${BASE-1}" r="3" fill="${tintRing}" stroke="#000" stroke-width="0.8"/>`;
+  svg += `<circle cx="${BX}" cy="${BASE-1}" r="1.2" fill="#000"/>`;
+
+  svg += `</svg>`;
+
+  // iconAnchor: x = BX (centre), y = BASE+3 so base sits ON the lat/lng
+  return L.divIcon({
+    html: svg,
+    className: 'fg-pole-icon',
+    iconSize: [W, H],
+    iconAnchor: [BX, BASE + 3],
+    popupAnchor: [0, -(BASE - 10)]
+  });
+}
+
+// Fallback simple marker when "Symbols" overlay is OFF — small coloured dot.
+function simplePoleDot(poleType, hasGPS, gpsSource) {
+  let col;
+  if (!hasGPS) col = '#ff5544';
+  else if (gpsSource === 'twonav') col = '#4a9eff';
+  else if (poleType === 'existing') col = '#bbbbbb';
+  else col = '#ffce00';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="7" fill="#000" opacity="0.45"/>
+    <circle cx="8" cy="8" r="5.5" fill="${col}" stroke="#000" stroke-width="1.5"/>
   </svg>`;
-  return L.divIcon({html:svg, className:'', iconSize:[22,30], iconAnchor:[11,29], popupAnchor:[0,-30]});
+  return L.divIcon({html: svg, className: '', iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -10]});
 }
 
 function initMap() {
@@ -2859,53 +3015,29 @@ function refreshMap() {
       (compHTML ? '<div style="margin-top:5px;line-height:1.8">'+compHTML+'</div>' : '') +
       snapBtn;
 
-    const marker = L.marker([p.lat, p.lng], {icon:poleIcon(p.poleType, true, srcCode)}).bindPopup(popupHTML, {maxWidth:280,minWidth:200}).addTo(leafletMap);
+    // Symbols ON → realistic pole drawing. OFF → small coloured dot (faster, less busy when zoomed far out).
+    // Also auto-falls-back to simple dot at low zoom levels.
+    const symEl = document.getElementById('overlay-symbols');
+    const useRealistic = showSymbols && !(symEl && symEl._forceSimple);
+    const iconForMarker = useRealistic
+      ? poleIcon(p.poleType, true, srcCode, p.components||{})
+      : simplePoleDot(p.poleType, true, srcCode);
+    const marker = L.marker([p.lat, p.lng], {icon: iconForMarker}).bindPopup(popupHTML, {maxWidth:280,minWidth:200}).addTo(leafletMap);
     mapMarkers.push(marker);
 
-    // ── SLD SYMBOL CLUSTER beside each pole ──
-    if (showSymbols && compEntries.length) {
-      // Build mini-HTML symbol overlay
-      const items = compEntries.slice(0, 6);  // top 6 components to avoid clutter
-      const hasNew = items.some(([cid]) => !estIds.has(cid));
-      const compCount = items.map(([cid, n]) => {
-        const name = S.components.find(c => c.id===cid)?.name || cid;
-        const isEst = estIds.has(cid);
-        const short = name.length > 14 ? name.slice(0,13)+'…' : name;
-        // Inline color removed — let .sld-overlay-symbol CSS govern (black on white).
-        // Use background tint on the icon span to distinguish est vs new instead of foreground color.
-        const tint = isEst ? 'background:rgba(255,206,0,.25)' : 'background:rgba(0,212,164,.25)';
-        return '<div class="row"><span class="ic" style="'+tint+';padding:1px 3px;border-radius:3px;color:#000">'+(COMP_GLYPH[cid]||'■')+'</span><span>'+esc(short)+' <b>×'+n+'</b></span></div>';
-      }).join('');
-      const more = compEntries.length > 6 ? '<div style="color:#555;font-size:8px;margin-top:2px">+'+(compEntries.length-6)+' more</div>' : '';
-      const cls = hasNew ? 'sld-overlay-symbol new' : 'sld-overlay-symbol';
-      const ttl = showLabels ? '<div class="ttl">'+esc(p.code)+'</div>' : '';
-      const overlayHTML = '<div class="'+cls+'">'+ttl+compCount+more+'</div>';
-
-      // ── Stagger anchor so neighbouring poles' clusters don't overlap ──
-      // Cycle through 4 quadrant offsets: upper-right, lower-right, upper-left, lower-left.
-      const stagger = [
-        [-22, 32],   // upper-right (cluster sits up & right of pole)
-        [-22, -60],  // lower-right
-        [110, 32],   // upper-left
-        [110, -60]   // lower-left
-      ];
-      const off = stagger[pIdx % 4];
-
-      const symMarker = L.marker([p.lat, p.lng], {
-        icon: L.divIcon({html:overlayHTML, className:'', iconAnchor:off}),
-        interactive: false,
-        zIndexOffset: -100
-      }).addTo(leafletMap);
-      mapOverlayLayers.push(symMarker);
-    } else if (showLabels && !showSymbols) {
-      // Just the code label
+    // With realistic pole drawing as the marker itself, the bulky cluster card
+    // is no longer needed — components are visible AS components on the pole.
+    // The "Labels" toggle adds a compact code label below the pole base.
+    if (showLabels) {
       const codeMarker = L.marker([p.lat, p.lng], {
         icon: L.divIcon({
-          html:'<div style="background:rgba(255,255,255,.97);border:1.5px solid #000;border-radius:4px;padding:2px 6px;font-size:11px;color:#000;font-family:monospace;font-weight:900;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4)">'+esc(p.code)+'</div>',
-          className:'', iconAnchor:[-18, 30]
+          html: '<div style="background:rgba(255,255,255,.95);border:1px solid #000;border-radius:3px;padding:1px 5px;font-size:10px;color:#000;font-family:monospace;font-weight:900;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.4)">'+esc(p.code)+'</div>',
+          className: '',
+          iconSize: [40, 14],
+          iconAnchor: [20, -8]   // sits BELOW the pole base (since base is at lat/lng, +y offsets downward in screen space → use negative-y trick: anchor below means iconAnchor.y negative pulls it down)
         }),
         interactive: false,
-        zIndexOffset: -100
+        zIndexOffset: 50
       }).addTo(leafletMap);
       mapOverlayLayers.push(codeMarker);
     }
@@ -2921,7 +3053,15 @@ function refreshMap() {
 }
 
 function refreshOverlays() {
-  // Future: hide labels at low zoom
+  // Re-render markers when zoom changes so realistic poles auto-collapse to
+  // simple dots at low zoom (where pole drawings would be unreadable anyway).
+  if (leafletMap && leafletMap.getZoom() < 16) {
+    // Force "simple dot" mode at low zoom regardless of toggle
+    document.getElementById('overlay-symbols')._forceSimple = true;
+  } else {
+    document.getElementById('overlay-symbols')._forceSimple = false;
+  }
+  refreshMap();
 }
 
 function fitMapToPoles() {
