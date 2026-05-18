@@ -2434,10 +2434,10 @@ const TILE_LAYERS = {
 };
 
 // ══════════════════════════════════════════════════════
-// REALISTIC POLE RENDERING ON MAP — with visible component labels
-// Pole base sits at the lat/lng. Pole rises above. Each component drawn
-// at its anatomical position. A side-rail of labels names each component
-// so you can read what's on the pole at-a-glance.
+// REALISTIC POLE — components as mini-symbols attached to alternating sides
+// Each component on the pole is drawn as a small SVG (~1/5 the pole size)
+// with its label right next to it. Components alternate left/right down
+// the shaft so they never crowd each other. The pole base sits at lat/lng.
 // ══════════════════════════════════════════════════════
 function poleIcon(poleType, hasGPS, gpsSource, components, scale) {
   components = components || {};
@@ -2451,174 +2451,153 @@ function poleIcon(poleType, hasGPS, gpsSource, components, scale) {
   else shaftCol = '#9a9a9a';
   const tintRing = gpsSource === 'twonav' ? '#4a9eff' : (gpsSource === 'pinned' ? '#ffce00' : (gpsSource === 'manual' ? '#a78bfa' : '#cccccc'));
 
-  // ── Bigger canvas: 200 wide × 180 tall ──
-  // Pole structure occupies LEFT 90px. Right 110px is reserved for component labels.
-  const W = 200, H = 180;
-  const BX = 50;              // pole base x
-  const BASE = 165;           // base y (where lat/lng sits)
-  const TOP = 30;             // top of pole shaft
-  const ARM_Y = 42;           // cross-arm height
-  const ARM_LEN = 28;         // half-length
-  const SHAFT_W_TOP = 4;
-  const SHAFT_W_BOT = 7;
-
+  // Canvas geometry computed dynamically below based on component count.
   const has = (id) => (components[id]||0) > 0;
   const cnt = (id) => components[id]||0;
 
   const showArm = has('cross_arm') || has('disc_insul') || has('pin_insul') || has('fuse_cutout') || has('pg_clamp') || has('connector_ipc') || cnt('conductor') > 0;
 
-  // Build label rail entries on the right side (component name + count)
-  const labelRail = [];   // [{y, name, cnt, col, dotCol, dotX, dotY}]
-  function addLabel(y, name, count, col, sourceX, sourceY) {
-    labelRail.push({y, name, count, col, sourceX, sourceY});
+  // ── Pre-compute bay count so we can size the canvas correctly ──
+  const bayList = [];
+  function preAddBay(id, count, name, drawFn, colour) {
+    if (count > 0) bayList.push({id, count, name, drawFn, colour});
   }
+  preAddBay('fuse_cutout', cnt('fuse_cutout'), 'DDLA Cutout', drawCutoutMini, '#d97706');
+  preAddBay('anchor_clamp', cnt('anchor_clamp'), 'Anchor Clamp', drawClampMini, '#888');
+  preAddBay('susp_clamp', cnt('susp_clamp'), 'Susp. Clamp', drawClampMini, '#888');
+  preAddBay('d_iron', cnt('d_iron'), 'D-Iron', drawDIronMini, '#bbb');
+  preAddBay('pg_clamp', cnt('pg_clamp'), 'PG Clamp', drawPGMini, '#c0392b');
+  preAddBay('connector_ipc', cnt('connector_ipc'), 'IPC Connector', drawPGMini, '#c0392b');
+  preAddBay('i_bolt', cnt('i_bolt'), 'I-Bolt', drawIBoltMini, '#777');
+  preAddBay('lt_stay', cnt('lt_stay'), 'LT Stay', null, '#999');
+  preAddBay('stay_wire', cnt('stay_wire'), 'Stay Wire', null, '#999');
+  preAddBay('earth_rod', cnt('earth_rod'), 'Earth Rod', drawEarthMini, '#1a4a8a');
+  preAddBay('conductor', cnt('conductor'), 'Conductor', drawConductorMini, '#999');
+  ['cable_25_2c', 'cable_50_2c', 'cable_50_4c'].forEach(cid => {
+    const cname = {cable_25_2c:'2.5mm² 2C', cable_50_2c:'50mm² 2C', cable_50_4c:'50mm² 4C'}[cid];
+    preAddBay(cid, cnt(cid), cname, drawCableMini, '#0d8');
+  });
+
+  // Compute dynamic canvas height — each bay needs 24px
+  const BAY_H_calc = 24;
+  const TOP = 30;
+  const ARM_Y = 45;
+  const BAY_START_Y_calc = ARM_Y + 16;
+  const baseFromBays = BAY_START_Y_calc + Math.max(bayList.length, 1) * BAY_H_calc + 10;
+  const BASE = Math.max(185, baseFromBays);    // base y grows with bay count
+  const H = BASE + 35;                          // room for pole-type label below
+
+  const W = 240;
+  const BX = 120;
+  const ARM_LEN = 30;
+  const SHAFT_W_TOP = 4;
+  const SHAFT_W_BOT = 7;
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W*scale}" height="${H*scale}" viewBox="0 0 ${W} ${H}" style="overflow:visible">`;
 
-  // Drop shadow on ground
-  svg += `<ellipse cx="${BX}" cy="${BASE+3}" rx="14" ry="3.5" fill="#000" opacity="0.5"/>`;
-  // Ground line
-  svg += `<line x1="${BX-22}" y1="${BASE+1}" x2="${BX+22}" y2="${BASE+1}" stroke="#444" stroke-width="1.2"/>`;
-  svg += `<line x1="${BX-18}" y1="${BASE+5}" x2="${BX+18}" y2="${BASE+5}" stroke="#444" stroke-width="0.8" stroke-dasharray="2,1"/>`;
+  // Shadow + ground
+  svg += `<ellipse cx="${BX}" cy="${BASE+3}" rx="16" ry="4" fill="#000" opacity="0.5"/>`;
+  svg += `<line x1="${BX-26}" y1="${BASE+1}" x2="${BX+26}" y2="${BASE+1}" stroke="#444" stroke-width="1.2"/>`;
+  svg += `<line x1="${BX-22}" y1="${BASE+5}" x2="${BX+22}" y2="${BASE+5}" stroke="#444" stroke-width="0.8" stroke-dasharray="2,1.5"/>`;
 
-  // ── Earth rod (drawn first so other things layer over base) ──
-  if (has('earth_rod')) {
-    svg += `<line x1="${BX-6}" y1="${BASE}" x2="${BX-6}" y2="${BASE+22}" stroke="#1a4a8a" stroke-width="2"/>`;
-    svg += `<line x1="${BX-10}" y1="${BASE+20}" x2="${BX-2}" y2="${BASE+20}" stroke="#1a4a8a" stroke-width="2"/>`;
-    svg += `<line x1="${BX-8}" y1="${BASE+24}" x2="${BX-4}" y2="${BASE+24}" stroke="#1a4a8a" stroke-width="1.8"/>`;
-    addLabel(BASE+18, 'Earth rod', cnt('earth_rod'), '#1a4a8a', BX-6, BASE+22);
-  }
-
-  // ── Pole shaft (tapered, 3D shading) ──
+  // Pole shaft (tapered + 3D highlight)
   svg += `<polygon points="${BX-SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_BOT},${BASE} ${BX-SHAFT_W_BOT},${BASE}" fill="${shaftCol}" stroke="#000" stroke-width="1.5" ${isExisting?'stroke-dasharray="4,3"':''}/>`;
   svg += `<polygon points="${BX+SHAFT_W_TOP*0.4},${TOP} ${BX+SHAFT_W_TOP},${TOP} ${BX+SHAFT_W_BOT},${BASE} ${BX+SHAFT_W_BOT*0.4},${BASE}" fill="#fff" opacity="0.18"/>`;
-  // Pole label (shaft type)
-  const poleTypeName = {psc:'PSC Pole', wooden:'Wooden', gi:'GI Pole', rcc:'RCC Pole', existing:'Existing', corner:'Corner', terminal:'Terminal', tee:'Tee'}[poleType] || 'Pole';
-  addLabel((TOP+BASE)/2, poleTypeName, cnt('pole')||1, shaftCol === '#9a9a9a' ? '#ddd' : shaftCol, BX+SHAFT_W_BOT*0.7, (TOP+BASE)/2);
 
-  // ── Cross-arm ──
+  // Cross-arm
   if (showArm) {
     svg += `<rect x="${BX-ARM_LEN}" y="${ARM_Y-3}" width="${ARM_LEN*2}" height="5.5" rx="0.8" fill="#555" stroke="#000" stroke-width="1"/>`;
     svg += `<circle cx="${BX}" cy="${ARM_Y}" r="1.8" fill="#222"/>`;
-    if (has('cross_arm')) addLabel(ARM_Y, 'Cross-arm', cnt('cross_arm'), '#bbb', BX+ARM_LEN, ARM_Y);
   }
 
-  // ── Insulators ──
+  // Insulators on cross-arm (drawn on the arm, labelled above-centre)
   const insulN = cnt('disc_insul') + cnt('pin_insul');
   if (insulN > 0 && showArm) {
     const positions = insulN === 1 ? [BX] :
                       insulN === 2 ? [BX-14, BX+14] :
-                      [BX-18, BX, BX+18];
+                      [BX-20, BX, BX+20];
     positions.slice(0, 3).forEach(ix => {
       svg += `<line x1="${ix}" y1="${ARM_Y-3}" x2="${ix}" y2="${ARM_Y-7}" stroke="#333" stroke-width="1"/>`;
       svg += `<ellipse cx="${ix}" cy="${ARM_Y-9}" rx="3.5" ry="1.5" fill="#fff" stroke="#444" stroke-width="0.8"/>`;
       svg += `<ellipse cx="${ix}" cy="${ARM_Y-12}" rx="2.8" ry="1.3" fill="#fff" stroke="#444" stroke-width="0.7"/>`;
       svg += `<ellipse cx="${ix}" cy="${ARM_Y-14.5}" rx="2.2" ry="1.1" fill="#fff" stroke="#444" stroke-width="0.6"/>`;
     });
-    if (cnt('disc_insul')) addLabel(ARM_Y-12, 'Disc Insulator', cnt('disc_insul'), '#fff', positions[positions.length-1]+3, ARM_Y-12);
-    if (cnt('pin_insul')) addLabel(ARM_Y-9, 'Pin Insulator', cnt('pin_insul'), '#fff', positions[positions.length-1]+3, ARM_Y-9);
   }
 
-  // ── Lightning arrester ──
+  // Lightning arrester — drawn ON TOP of pole, label above it
   if (has('lightning_arr')) {
     svg += `<line x1="${BX}" y1="${TOP}" x2="${BX}" y2="${TOP-12}" stroke="#222" stroke-width="1.5"/>`;
     svg += `<rect x="${BX-3}" y="${TOP-18}" width="6" height="7" fill="#ddd" stroke="#000" stroke-width="0.8"/>`;
     svg += `<polygon points="${BX-5},${TOP-18} ${BX+5},${TOP-18} ${BX},${TOP-24}" fill="#ffce00" stroke="#000" stroke-width="0.8"/>`;
-    addLabel(TOP-20, 'Lightning Arr.', cnt('lightning_arr'), '#ffce00', BX+5, TOP-20);
   }
 
-  // ── Fuse cutouts (DDLA) ──
-  const cutoutN = cnt('fuse_cutout');
-  if (cutoutN > 0 && showArm) {
-    const positions = cutoutN === 1 ? [BX+10] :
-                      cutoutN === 2 ? [BX-10, BX+10] :
-                      [BX-14, BX, BX+14];
-    positions.slice(0, 3).forEach(ix => {
-      svg += `<line x1="${ix}" y1="${ARM_Y+3}" x2="${ix}" y2="${ARM_Y+7}" stroke="#222" stroke-width="1.2"/>`;
-      svg += `<rect x="${ix-2.5}" y="${ARM_Y+7}" width="5" height="14" rx="0.8" fill="#d97706" stroke="#000" stroke-width="0.8"/>`;
-      svg += `<rect x="${ix-3}" y="${ARM_Y+6}" width="6" height="2.2" fill="#222"/>`;
-      svg += `<rect x="${ix-3}" y="${ARM_Y+20.5}" width="6" height="2.2" fill="#222"/>`;
-    });
-    addLabel(ARM_Y+14, 'DDLA Cutout', cutoutN, '#d97706', positions[positions.length-1]+4, ARM_Y+14);
-  }
+  // ── Bay system: components alternate L/R/L/R down the shaft ──
+  const BAY_START_Y = ARM_Y + 16;
+  const BAY_H = BAY_H_calc;
+  const BAY_OFFSET_X = 22;
 
-  // ── Anchor clamp / suspension clamp ──
-  if (has('anchor_clamp') || has('susp_clamp')) {
-    svg += `<rect x="${BX-6}" y="${ARM_Y+28}" width="12" height="5" rx="0.8" fill="#666" stroke="#000" stroke-width="0.8"/>`;
-    svg += `<circle cx="${BX-3.5}" cy="${ARM_Y+30.5}" r="1" fill="#222"/>`;
-    svg += `<circle cx="${BX+3.5}" cy="${ARM_Y+30.5}" r="1" fill="#222"/>`;
-    if (has('anchor_clamp')) addLabel(ARM_Y+30, 'Anchor Clamp', cnt('anchor_clamp'), '#aaa', BX+6, ARM_Y+30);
-    if (has('susp_clamp')) addLabel(ARM_Y+30, 'Susp. Clamp', cnt('susp_clamp'), '#aaa', BX+6, ARM_Y+30);
-  }
-
-  // ── D-iron ──
-  if (has('d_iron')) {
-    svg += `<path d="M ${BX-8},${ARM_Y+38} L ${BX-8},${ARM_Y+48} L ${BX+8},${ARM_Y+48} L ${BX+8},${ARM_Y+38}" fill="none" stroke="#444" stroke-width="2" stroke-linejoin="miter"/>`;
-    addLabel(ARM_Y+43, 'D-Iron', cnt('d_iron'), '#bbb', BX+8, ARM_Y+43);
-  }
-
-  // ── PG clamp / connector ──
-  if (has('pg_clamp') || has('connector_ipc')) {
-    svg += `<circle cx="${BX-22}" cy="${ARM_Y}" r="2.8" fill="#c0392b" stroke="#000" stroke-width="0.8"/>`;
-    if (has('pg_clamp')) addLabel(ARM_Y+4, 'PG Clamp', cnt('pg_clamp'), '#c0392b', BX-19, ARM_Y+4);
-    if (has('connector_ipc')) addLabel(ARM_Y-4, 'IPC Connector', cnt('connector_ipc'), '#c0392b', BX-19, ARM_Y-4);
-  }
-
-  // ── I-bolt ──
-  if (has('i_bolt')) {
-    svg += `<circle cx="${BX-7}" cy="${ARM_Y+58}" r="2" fill="none" stroke="#555" stroke-width="1.2"/>`;
-    svg += `<line x1="${BX-7}" y1="${ARM_Y+58}" x2="${BX}" y2="${ARM_Y+58}" stroke="#555" stroke-width="1.2"/>`;
-    addLabel(ARM_Y+58, 'I-Bolt', cnt('i_bolt'), '#888', BX+SHAFT_W_BOT*0.6, ARM_Y+58);
-  }
-
-  // ── Stay wire ──
+  // Stay wire drawn separately as diagonal line
   if (has('lt_stay') || has('stay_wire')) {
-    const stayEndX = BX + 32, stayEndY = BASE - 2;
+    const stayEndX = BX + 36, stayEndY = BASE - 2;
     svg += `<line x1="${BX+2}" y1="${ARM_Y+7}" x2="${stayEndX}" y2="${stayEndY}" stroke="#3a3a3a" stroke-width="2.2"/>`;
     const sIx = (BX + stayEndX) / 2, sIy = (ARM_Y + 7 + stayEndY) / 2;
     svg += `<ellipse cx="${sIx}" cy="${sIy}" rx="2.5" ry="1.3" fill="#fff" stroke="#444" stroke-width="0.7"/>`;
     svg += `<rect x="${stayEndX-3}" y="${stayEndY-2}" width="6" height="5" fill="#444" stroke="#000" stroke-width="0.6"/>`;
-    if (has('lt_stay')) addLabel(sIy, 'LT Stay', cnt('lt_stay'), '#999', sIx+3, sIy);
-    if (has('stay_wire')) addLabel(sIy+10, 'Stay Wire', cnt('stay_wire'), '#999', sIx+3, sIy+10);
   }
 
-  // ── Conductor terminations ──
-  if (cnt('conductor') > 0 && showArm) {
-    svg += `<circle cx="${BX-ARM_LEN}" cy="${ARM_Y}" r="2.2" fill="#222"/>`;
-    svg += `<circle cx="${BX+ARM_LEN}" cy="${ARM_Y}" r="2.2" fill="#222"/>`;
-    addLabel(ARM_Y, 'Conductor', cnt('conductor'), '#999', BX+ARM_LEN+3, ARM_Y);
-  }
+  // Draw mini-symbols and labels in bays, alternating sides
+  bayList.forEach((comp, idx) => {
+    const onRight = idx % 2 === 0;
+    const xCenter = BX + (onRight ? BAY_OFFSET_X : -BAY_OFFSET_X);
+    const yCenter = BAY_START_Y + idx * BAY_H + BAY_H/2;
 
-  // ── Cable labels (cable_25_2c, cable_50_2c, cable_50_4c) ──
-  ['cable_25_2c', 'cable_50_2c', 'cable_50_4c'].forEach((cid, i) => {
-    if (cnt(cid) > 0) {
-      const cableName = {cable_25_2c:'2.5mm² 2C', cable_50_2c:'50mm² 2C', cable_50_4c:'50mm² 4C'}[cid];
-      addLabel(ARM_Y - 4 + i*8, cableName, cnt(cid), '#0d8', BX+ARM_LEN+3, ARM_Y - 4 + i*8);
+    // Connector line from shaft to mini-symbol
+    svg += `<line x1="${BX + (onRight ? SHAFT_W_BOT*0.5 : -SHAFT_W_BOT*0.5)}" y1="${yCenter}" x2="${xCenter + (onRight ? -8 : 8)}" y2="${yCenter}" stroke="#666" stroke-width="0.8" opacity="0.6"/>`;
+
+    // Draw the mini-symbol
+    if (comp.drawFn) {
+      svg += comp.drawFn(xCenter, yCenter, comp.colour);
+    } else if (comp.id === 'lt_stay' || comp.id === 'stay_wire') {
+      svg += `<text x="${xCenter}" y="${yCenter+3}" text-anchor="middle" font-size="10" fill="${comp.colour}">╲</text>`;
+    } else {
+      svg += `<rect x="${xCenter-4}" y="${yCenter-4}" width="8" height="8" rx="1" fill="none" stroke="${comp.colour}" stroke-width="1.5"/>`;
     }
+
+    // Label pill on the same side as the mini-symbol
+    const labelText = `${comp.name} ×${comp.count}`;
+    const labelW = labelText.length * 4.6 + 8;
+    const labelX = onRight ? xCenter + 9 : xCenter - 9 - labelW;
+    svg += `<rect x="${labelX}" y="${yCenter-5.5}" width="${labelW}" height="11" rx="2" fill="rgba(0,0,0,0.92)" stroke="${comp.colour}" stroke-width="0.9"/>`;
+    svg += `<text x="${labelX + labelW/2}" y="${yCenter+3}" text-anchor="middle" fill="#fff" font-family="monospace" font-size="7.5" font-weight="700">${esc(labelText)}</text>`;
   });
 
-  // ── GPS source dot at base ──
+  // Pole type label (small tag at base, on the side opposite to where bays end)
+  const poleTypeName = {psc:'PSC Pole', wooden:'Wooden', gi:'GI Pole', rcc:'RCC Pole', existing:'Existing', corner:'Corner', terminal:'Terminal', tee:'Tee'}[poleType] || 'Pole';
+  const ptText = poleTypeName;
+  const ptW = ptText.length * 4.6 + 8;
+  svg += `<rect x="${BX-ptW/2}" y="${BASE+10}" width="${ptW}" height="11" rx="2" fill="rgba(0,0,0,0.92)" stroke="${shaftCol === '#9a9a9a' ? '#ddd' : shaftCol}" stroke-width="0.9"/>`;
+  svg += `<text x="${BX}" y="${BASE+18}" text-anchor="middle" fill="#fff" font-family="monospace" font-size="7.5" font-weight="700">${esc(ptText)}</text>`;
+
+  // Insulator label above the arm
+  if (insulN > 0) {
+    const iName = cnt('disc_insul') > cnt('pin_insul') ? 'Disc Insulator' : 'Pin Insulator';
+    const iText = `${iName} ×${insulN}`;
+    const iW = iText.length * 4.6 + 8;
+    svg += `<rect x="${BX-iW/2}" y="${ARM_Y-25}" width="${iW}" height="11" rx="2" fill="rgba(0,0,0,0.92)" stroke="#fff" stroke-width="0.9"/>`;
+    svg += `<text x="${BX}" y="${ARM_Y-17}" text-anchor="middle" fill="#fff" font-family="monospace" font-size="7.5" font-weight="700">${esc(iText)}</text>`;
+  }
+
+  // Lightning arrester label above arrester
+  if (has('lightning_arr')) {
+    const laText = `Lightning ×${cnt('lightning_arr')}`;
+    const laW = laText.length * 4.6 + 8;
+    svg += `<rect x="${BX-laW/2}" y="${TOP-36}" width="${laW}" height="11" rx="2" fill="rgba(0,0,0,0.92)" stroke="#ffce00" stroke-width="0.9"/>`;
+    svg += `<text x="${BX}" y="${TOP-28}" text-anchor="middle" fill="#fff" font-family="monospace" font-size="7.5" font-weight="700">${esc(laText)}</text>`;
+  }
+
+  // GPS source dot
   svg += `<circle cx="${BX}" cy="${BASE-2}" r="5" fill="${tintRing}" stroke="#000" stroke-width="1.2"/>`;
   svg += `<circle cx="${BX}" cy="${BASE-2}" r="2" fill="#000"/>`;
-
-  // ── COMPONENT LABEL RAIL on the right side ──
-  // Sort labels by Y so they read top-to-bottom, and de-overlap them
-  labelRail.sort((a, b) => a.y - b.y);
-  const RAIL_X = 92;            // labels start here
-  const ROW_H = 11;             // minimum spacing between labels
-  let lastY = -100;
-  labelRail.forEach((lbl, i) => {
-    let ly = lbl.y;
-    if (ly - lastY < ROW_H) ly = lastY + ROW_H;
-    lastY = ly;
-    // Leader line from component to label
-    svg += `<line x1="${lbl.sourceX}" y1="${lbl.sourceY}" x2="${RAIL_X-2}" y2="${ly}" stroke="${lbl.col}" stroke-width="0.7" opacity="0.7" stroke-dasharray="2,1.5"/>`;
-    // Label background pill
-    const text = `${lbl.name} ×${lbl.count}`;
-    const textW = text.length * 4.3 + 8;
-    svg += `<rect x="${RAIL_X}" y="${ly-5}" width="${textW}" height="10" rx="2" fill="rgba(0,0,0,0.92)" stroke="${lbl.col}" stroke-width="0.8"/>`;
-    svg += `<text x="${RAIL_X+4}" y="${ly+3}" fill="#fff" font-family="monospace" font-size="7" font-weight="700">${esc(text)}</text>`;
-  });
 
   svg += `</svg>`;
 
@@ -2629,6 +2608,51 @@ function poleIcon(poleType, hasGPS, gpsSource, components, scale) {
     iconAnchor: [BX*scale, (BASE+3)*scale],
     popupAnchor: [0, -BASE*scale + 10]
   });
+}
+
+// ── Mini-symbol drawers — each returns an SVG fragment centered at (cx, cy) ──
+function drawCutoutMini(cx, cy, col) {
+  // Mini DDLA cutout: orange drum on bracket
+  return `<line x1="${cx}" y1="${cy-7}" x2="${cx}" y2="${cy-4}" stroke="#222" stroke-width="0.8"/>` +
+         `<rect x="${cx-2.5}" y="${cy-4}" width="5" height="9" rx="0.5" fill="${col}" stroke="#000" stroke-width="0.7"/>` +
+         `<rect x="${cx-3}" y="${cy-5}" width="6" height="1.5" fill="#222"/>` +
+         `<rect x="${cx-3}" y="${cy+5}" width="6" height="1.5" fill="#222"/>`;
+}
+function drawClampMini(cx, cy, col) {
+  // Bracket with two bolt heads
+  return `<rect x="${cx-5}" y="${cy-2}" width="10" height="4" rx="0.5" fill="${col}" stroke="#000" stroke-width="0.7"/>` +
+         `<circle cx="${cx-3}" cy="${cy}" r="0.8" fill="#222"/>` +
+         `<circle cx="${cx+3}" cy="${cy}" r="0.8" fill="#222"/>`;
+}
+function drawDIronMini(cx, cy, col) {
+  // U-shape D-iron
+  return `<path d="M ${cx-5},${cy-5} L ${cx-5},${cy+4} L ${cx+5},${cy+4} L ${cx+5},${cy-5}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="miter"/>`;
+}
+function drawPGMini(cx, cy, col) {
+  return `<circle cx="${cx}" cy="${cy}" r="3" fill="${col}" stroke="#000" stroke-width="0.7"/>` +
+         `<circle cx="${cx}" cy="${cy}" r="1.2" fill="#222"/>`;
+}
+function drawIBoltMini(cx, cy, col) {
+  return `<line x1="${cx-4}" y1="${cy}" x2="${cx+4}" y2="${cy}" stroke="${col}" stroke-width="1.2"/>` +
+         `<circle cx="${cx+4}" cy="${cy}" r="2" fill="none" stroke="${col}" stroke-width="1"/>`;
+}
+function drawEarthMini(cx, cy, col) {
+  // Down-arrow with ground rungs (the standard earth symbol)
+  return `<line x1="${cx}" y1="${cy-4}" x2="${cx}" y2="${cy+3}" stroke="${col}" stroke-width="1.3"/>` +
+         `<line x1="${cx-4}" y1="${cy+3}" x2="${cx+4}" y2="${cy+3}" stroke="${col}" stroke-width="1.3"/>` +
+         `<line x1="${cx-3}" y1="${cy+5}" x2="${cx+3}" y2="${cy+5}" stroke="${col}" stroke-width="1"/>` +
+         `<line x1="${cx-2}" y1="${cy+7}" x2="${cx+2}" y2="${cy+7}" stroke="${col}" stroke-width="0.8"/>`;
+}
+function drawConductorMini(cx, cy, col) {
+  return `<line x1="${cx-5}" y1="${cy}" x2="${cx+5}" y2="${cy}" stroke="${col}" stroke-width="1.5"/>` +
+         `<circle cx="${cx-2}" cy="${cy}" r="1" fill="${col}"/>` +
+         `<circle cx="${cx+2}" cy="${cy}" r="1" fill="${col}"/>`;
+}
+function drawCableMini(cx, cy, col) {
+  // Multi-strand horizontal lines
+  return `<line x1="${cx-5}" y1="${cy-2}" x2="${cx+5}" y2="${cy-2}" stroke="${col}" stroke-width="1.3"/>` +
+         `<line x1="${cx-5}" y1="${cy+0.5}" x2="${cx+5}" y2="${cy+0.5}" stroke="${col}" stroke-width="1.3"/>` +
+         `<line x1="${cx-5}" y1="${cy+3}" x2="${cx+5}" y2="${cy+3}" stroke="${col}" stroke-width="1.3"/>`;
 }
 
 // Fallback simple marker when "Symbols" overlay is OFF — small coloured dot.
