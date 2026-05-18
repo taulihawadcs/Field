@@ -1,6 +1,6 @@
 // FieldGrid Pro Service Worker — offline-first cache
 // Bumps version to invalidate old caches when assets change
-const CACHE_VERSION = 'fg-v6.4';
+const CACHE_VERSION = 'fg-v6.5';
 const APP_CACHE   = CACHE_VERSION + '-app';
 const TILE_CACHE  = CACHE_VERSION + '-tiles';
 
