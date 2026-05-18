@@ -590,6 +590,39 @@ td b{color:var(--acc);font-family:var(--D)}
       </div>
     </div>
 
+    <!-- ── TwoNav GPX import + GPS source filter ── -->
+    <div style="background:var(--p2);border:1px solid var(--line);border-radius:var(--r);padding:10px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-family:var(--D);font-size:12px;color:#4a9eff">📡 TwoNav GPS Track</span>
+        <span style="font-size:10px;color:var(--i3)">import & snap poles</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <label class="btn bO sm" style="cursor:pointer;font-size:10px;min-height:36px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px">
+          📥 Import GPX
+          <input type="file" id="gpx-file-input" accept=".gpx,application/gpx+xml,text/xml" onchange="importGPX(this.files[0])" style="display:none">
+        </label>
+        <button class="btn bO sm" id="gpx-show-btn" onclick="toggleGpxTrack()" style="font-size:10px;min-height:36px;padding:5px 10px;display:none">👁 Hide track</button>
+        <button class="btn bG sm" id="snap-all-btn" onclick="snapAllPoles()" style="font-size:10px;min-height:36px;padding:5px 10px;display:none">🎯 Snap all poles</button>
+        <button class="btn bW sm" id="gpx-clear-btn" onclick="clearGPX()" style="font-size:10px;min-height:36px;padding:5px 10px;display:none">✕ Clear track</button>
+      </div>
+      <div id="gpx-status" style="font-size:10px;color:var(--i3);font-family:var(--M);line-height:1.5">No GPX imported. Record a track on your TwoNav, export as GPX, then import here to snap poles to high-precision coordinates.</div>
+
+      <div style="border-top:1px solid var(--line);margin-top:10px;padding-top:8px">
+        <div style="font-size:11px;color:var(--ink);font-family:var(--M);margin-bottom:5px"><b>Filter by GPS source</b> <span style="color:var(--i3)">(affects map, PDF & PNG export)</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <label style="cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:5px;background:var(--p);border:1px solid var(--line);border-radius:6px;padding:6px 10px">
+            <input type="radio" name="gpsFilter" value="all" checked onchange="setGpsSourceFilter('all')" style="accent-color:var(--acc)"> All
+          </label>
+          <label style="cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:5px;background:var(--p);border:1px solid #4a9eff;border-radius:6px;padding:6px 10px;color:#4a9eff">
+            <input type="radio" name="gpsFilter" value="twonav" onchange="setGpsSourceFilter('twonav')" style="accent-color:#4a9eff"> 📡 TwoNav only
+          </label>
+          <label style="cursor:pointer;font-size:10px;display:inline-flex;align-items:center;gap:5px;background:var(--p);border:1px solid var(--line);border-radius:6px;padding:6px 10px">
+            <input type="radio" name="gpsFilter" value="phone" onchange="setGpsSourceFilter('phone')" style="accent-color:var(--acc)"> 📱 Phone only
+          </label>
+        </div>
+      </div>
+    </div>
+
     <div class="map-wrap" id="map-wrap">
       <div id="pole-map"></div>
       <div class="map-overlay">
@@ -999,6 +1032,29 @@ function loadState() {
   S.components.forEach(c => S.counters[c.id] = 0);
   S.curPhotos = [];
   S.gpsLocked = false;
+  // Restore imported GPX track for this project
+  gpxTrack = pGet('gpxTrack', null);
+  // Update GPX UI controls if visible
+  setTimeout(() => {
+    const showBtn = document.getElementById('gpx-show-btn');
+    const snapBtn = document.getElementById('snap-all-btn');
+    const clearBtn = document.getElementById('gpx-clear-btn');
+    const status = document.getElementById('gpx-status');
+    if (gpxTrack && gpxTrack.length) {
+      if (showBtn) showBtn.style.display = '';
+      if (snapBtn) snapBtn.style.display = '';
+      if (clearBtn) clearBtn.style.display = '';
+      if (status) {
+        const dKm = (computeTrackLength(gpxTrack)/1000).toFixed(2);
+        status.innerHTML = '✅ <b>' + gpxTrack.length + '</b> trackpoints loaded · <b>' + dKm + ' km</b>';
+      }
+    } else {
+      if (showBtn) showBtn.style.display = 'none';
+      if (snapBtn) snapBtn.style.display = 'none';
+      if (clearBtn) clearBtn.style.display = 'none';
+      if (status) status.textContent = 'No GPX imported. Record a track on your TwoNav, export as GPX, then import here to snap poles to high-precision coordinates.';
+    }
+  }, 50);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1996,37 +2052,80 @@ function renderSLD() {
     const ti = toCode ? poles.findIndex(p => p.code===toCode) : poles.length-1;
     if (fi >= 0 && ti >= fi) poles = poles.slice(fi, ti+1);
   }
+
+  // ── Apply GPS-source filter if active ──
+  const gpsFilter = window.gpsSourceFilter || 'all';   // 'all' | 'twonav' | 'phone'
+  if (gpsFilter !== 'all') {
+    poles = poles.filter(p => {
+      const src = poleGpsSource(p);
+      return gpsFilter === 'twonav' ? src === 'twonav' : src !== 'twonav';
+    });
+  }
+  if (!poles.length) {
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--warn);font-size:12px">No poles match the current GPS-source filter. Switch filter or import a TwoNav GPX.</div>';
+    return;
+  }
+
   const estIds = new Set(S.components.filter(c => c.est > 0).map(c => c.id));
-  const SYM_BOX = 30, LBL_W = 130;
-  const COL_W = SYM_BOX + 6 + LBL_W + 20;
-  const POLE_SP = COL_W + 20;
-  const PAD_L = 50;
+
+  // ── Anatomical zone map: where on the pole each component sits ──
+  // Zones (relative Y offsets from cross-arm Y):
+  //   top:    above cross-arm (lightning arr, pin insul) — y = ARM_Y - 18
+  //   arm:    on cross-arm       — y = ARM_Y
+  //   upper:  immediately below  — y = ARM_Y + 22
+  //   mid:    pole shaft middle  — y = ARM_Y + 50
+  //   stay:   diagonal stay      — anchored at upper-right
+  //   ground: at base            — y = POLE_BOT
+  //   line:   horizontal cable   — y = ARM_Y (passes through arm)
+  const ZONE = {
+    pole:'mid', cross_arm:'arm',
+    lightning_arr:'top', pin_insul:'top',
+    disc_insul:'arm', pg_clamp:'arm', connector_ipc:'arm',
+    fuse_cutout:'upper', anchor_clamp:'upper', susp_clamp:'upper', d_iron:'upper',
+    i_bolt:'mid',
+    lt_stay:'stay', stay_wire:'stay',
+    earth_rod:'ground',
+    conductor:'line', cable_25_2c:'line', cable_50_2c:'line', cable_50_4c:'line'
+  };
+
+  const COL_W = 130;          // column width per pole (much tighter than before)
+  const POLE_SP = COL_W;
+  const PAD_L = 60;
   const LEGEND_H = 26;
-  const PLATE_H = 44;
-  const PLATE_W = COL_W - 10;
-  const PLATE_Y_TOP = LEGEND_H + 10;
-  const BUS_Y = PLATE_Y_TOP + PLATE_H + 16;
-  const ARM_Y = BUS_Y - 18;
-  const POLE_TOP = ARM_Y - 20;
-  const POLE_BOT = BUS_Y + 20;
+  const PLATE_H = 32;
+  const PLATE_W = COL_W - 20;
+  const PLATE_Y_TOP = LEGEND_H + 8;
+  const ARM_Y = PLATE_Y_TOP + PLATE_H + 38;
+  const POLE_TOP = ARM_Y - 22;
+  const POLE_BOT = ARM_Y + 110;
   const GROUND_Y = POLE_BOT;
-  const SYM_START = GROUND_Y + 22;
-  const SYM_ROW = SYM_BOX + 8;
-  const maxSyms = Math.max.apply(null, poles.map(p => Object.values(p.components||{}).filter(v => v > 0).length).concat([0]));
-  const W = PAD_L + poles.length * POLE_SP + 20;
-  const H = SYM_START + maxSyms * SYM_ROW + 40;
+  const BUS_Y = ARM_Y;   // bus runs through cross-arms
+  const LBL_LIST_Y = GROUND_Y + 26;
+
+  const maxLblRows = Math.max.apply(null, poles.map(p => Object.values(p.components||{}).filter(v => v > 0).length).concat([0]));
+  const W = PAD_L + poles.length * POLE_SP + 30;
+  const H = LBL_LIST_Y + maxLblRows * 14 + 36;
 
   let s = '<svg id="sld-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="min-width:' + W + 'px;height:' + H + 'px;background:#0a0e14;display:block">';
+  // Grid
   for (let gx = 0; gx < W; gx += 40) s += '<line x1="'+gx+'" y1="0" x2="'+gx+'" y2="'+H+'" stroke="#0f1418" stroke-width="1"/>';
   for (let gy = 0; gy < H; gy += 40) s += '<line x1="0" y1="'+gy+'" x2="'+W+'" y2="'+gy+'" stroke="#0f1418" stroke-width="1"/>';
+  // Legend bar
   s += '<rect x="0" y="0" width="'+W+'" height="'+LEGEND_H+'" fill="#0d1117"/>';
   s += '<rect x="8" y="8" width="10" height="10" rx="2" fill="'+NEW_COL+'"/><text x="22" y="17" fill="'+NEW_COL+'" font-size="9" font-family="monospace">New</text>';
   s += '<rect x="70" y="8" width="10" height="10" rx="2" fill="'+EST_COL+'"/><text x="84" y="17" fill="'+EST_COL+'" font-size="9" font-family="monospace">Estimated</text>';
+  s += '<rect x="160" y="8" width="10" height="10" rx="2" fill="#4a9eff"/><text x="174" y="17" fill="#4a9eff" font-size="9" font-family="monospace">TwoNav GPS</text>';
+  if (gpsFilter !== 'all') {
+    s += '<text x="'+(W/2)+'" y="17" fill="#ff5544" font-size="10" text-anchor="middle" font-weight="bold" font-family="monospace">FILTER: '+(gpsFilter==='twonav'?'TwoNav GPS only':'Phone GPS only')+'</text>';
+  }
   s += '<text x="'+(W-6)+'" y="17" fill="#2a3a2a" font-size="8" text-anchor="end" font-family="monospace">FieldGrid SLD</text>';
-  const busX1 = PAD_L, busX2 = PAD_L + (poles.length-1)*POLE_SP;
-  s += '<line x1="'+(busX1-10)+'" y1="'+BUS_Y+'" x2="'+(busX2+10)+'" y2="'+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2.5"/>';
-  s += '<text x="'+(busX1-14)+'" y="'+(BUS_Y-6)+'" fill="'+EST_COL+'" font-size="9" text-anchor="end" font-weight="bold" font-family="monospace">LT SOURCE</text>';
 
+  // LT-source bus (conductor running pole to pole at cross-arm height)
+  const busX1 = PAD_L, busX2 = PAD_L + (poles.length-1)*POLE_SP;
+  s += '<line x1="'+(busX1-12)+'" y1="'+BUS_Y+'" x2="'+(busX2+12)+'" y2="'+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2.5"/>';
+  s += '<text x="'+(busX1-16)+'" y="'+(BUS_Y-8)+'" fill="'+EST_COL+'" font-size="9" text-anchor="end" font-weight="bold" font-family="monospace">LT SOURCE</text>';
+
+  // ── Spans + cables between poles ──
   poles.forEach((p, i) => {
     if (i === 0) return;
     const px = PAD_L + i*POLE_SP;
@@ -2036,55 +2135,110 @@ function renderSLD() {
       s += '<line x1="'+ppx+'" y1="'+BUS_Y+'" x2="'+px+'" y2="'+BUS_Y+'" stroke="#1a2a1a" stroke-width="1.5" stroke-dasharray="8,5"/>';
     } else {
       const sag = 10;
-      s += '<path d="M'+ppx+','+BUS_Y+' Q'+mid+','+(BUS_Y+sag)+' '+px+','+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2" fill="none" opacity="0.5"/>';
+      s += '<path d="M'+ppx+','+BUS_Y+' Q'+mid+','+(BUS_Y+sag)+' '+px+','+BUS_Y+'" stroke="'+NEW_COL+'" stroke-width="2" fill="none" opacity="0.55"/>';
       const cb = dominantCable(p.components||{});
       if (cb !== '—') s += '<text x="'+mid+'" y="'+(BUS_Y+sag+13)+'" fill="'+NEW_COL+'" font-size="8" text-anchor="middle" font-family="monospace">'+esc(cb)+'</text>';
       if (p.span) s += '<text x="'+mid+'" y="'+(BUS_Y-10)+'" fill="#2a5a2a" font-size="8" text-anchor="middle" font-family="monospace">'+p.span+'m</text>';
     }
   });
 
+  // ── Each pole ──
   poles.forEach((p, i) => {
     const px = PAD_L + i*POLE_SP;
     const c = p.components||{};
     const isExisting = p.poleType === 'existing';
+    const gpsSrc = poleGpsSource(p);
     const poleCol = isExisting ? '#666666' : EST_COL;
     const dash = isExisting ? ' stroke-dasharray="6,3"' : '';
+
+    // Top plate (slimmer): just the code + tiny source dot
     const plX = px - PLATE_W/2;
-    s += '<rect x="'+plX+'" y="'+PLATE_Y_TOP+'" width="'+PLATE_W+'" height="'+PLATE_H+'" rx="5" fill="#0d1520" stroke="'+poleCol+'" stroke-width="1.5"/>';
-    s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+18)+'" fill="'+EST_COL+'" font-size="14" text-anchor="middle" font-weight="bold" font-family="monospace">'+esc(p.code)+'</text>';
+    s += '<rect x="'+plX+'" y="'+PLATE_Y_TOP+'" width="'+PLATE_W+'" height="'+PLATE_H+'" rx="4" fill="#0d1520" stroke="'+poleCol+'" stroke-width="1.2"/>';
+    s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+15)+'" fill="'+EST_COL+'" font-size="12" text-anchor="middle" font-weight="bold" font-family="monospace">'+esc(p.code)+'</text>';
     if (p.location) {
-      const loc2 = p.location.length > 18 ? p.location.slice(0,17)+'…' : p.location;
-      s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+42)+'" fill="#2a8a2a" font-size="8" text-anchor="middle" font-family="monospace">'+esc(loc2)+'</text>';
+      const loc2 = p.location.length > 14 ? p.location.slice(0,13)+'…' : p.location;
+      s += '<text x="'+px+'" y="'+(PLATE_Y_TOP+27)+'" fill="#2a8a2a" font-size="7" text-anchor="middle" font-family="monospace">'+esc(loc2)+'</text>';
     }
-    s += '<line x1="'+px+'" y1="'+POLE_TOP+'" x2="'+px+'" y2="'+POLE_BOT+'" stroke="'+poleCol+'" stroke-width="4" stroke-linecap="round"'+dash+'/>';
-    const armLen = 22;
-    s += '<line x1="'+(px-armLen)+'" y1="'+ARM_Y+'" x2="'+(px+armLen)+'" y2="'+ARM_Y+'" stroke="'+poleCol+'" stroke-width="4" stroke-linecap="round"/>';
-    s += '<line x1="'+(px-9)+'" y1="'+(GROUND_Y+3)+'" x2="'+(px+9)+'" y2="'+(GROUND_Y+3)+'" stroke="#8a6010" stroke-width="2.5"/>';
-    s += '<line x1="'+(px-6)+'" y1="'+(GROUND_Y+7)+'" x2="'+(px+6)+'" y2="'+(GROUND_Y+7)+'" stroke="#8a6010" stroke-width="2"/>';
+    // Tiny GPS-source indicator dot
+    const srcCol = gpsSrc === 'twonav' ? '#4a9eff' : (gpsSrc === 'phone' ? EST_COL : (gpsSrc === 'manual' ? '#a78bfa' : '#666'));
+    s += '<circle cx="'+(plX+5)+'" cy="'+(PLATE_Y_TOP+5)+'" r="2.5" fill="'+srcCol+'"/>';
+
+    // ── POLE BODY: thin tall shaft (slim "pole-like" symbol) ──
+    s += '<line x1="'+px+'" y1="'+POLE_TOP+'" x2="'+px+'" y2="'+POLE_BOT+'" stroke="'+poleCol+'" stroke-width="2.5" stroke-linecap="round"'+dash+'/>';
+
+    // ── Cross-arm at top ──
+    if (c.cross_arm > 0 || c.disc_insul > 0 || c.pin_insul > 0) {
+      const armLen = 26;
+      s += '<line x1="'+(px-armLen)+'" y1="'+ARM_Y+'" x2="'+(px+armLen)+'" y2="'+ARM_Y+'" stroke="'+poleCol+'" stroke-width="2.5" stroke-linecap="round"/>';
+    }
+
+    // Ground line + earth marks at base
+    s += '<line x1="'+(px-10)+'" y1="'+(GROUND_Y+3)+'" x2="'+(px+10)+'" y2="'+(GROUND_Y+3)+'" stroke="#8a6010" stroke-width="2"/>';
+    s += '<line x1="'+(px-6)+'" y1="'+(GROUND_Y+7)+'" x2="'+(px+6)+'" y2="'+(GROUND_Y+7)+'" stroke="#8a6010" stroke-width="1.5"/>';
+
+    // ── DRAW EACH COMPONENT IN ITS ANATOMICAL ZONE ──
     const compEntries = Object.entries(c).filter(e => e[1] > 0);
-    if (compEntries.length) {
-      const spineEnd = SYM_START + compEntries.length*SYM_ROW - SYM_ROW/2;
-      s += '<line x1="'+px+'" y1="'+(GROUND_Y+14)+'" x2="'+px+'" y2="'+spineEnd+'" stroke="'+EST_COL+'" stroke-width="1.5" opacity="0.25"/>';
-      compEntries.forEach((entry, ri) => {
-        const [cid, cnt] = entry;
-        const isEst = estIds.has(cid);
-        const col = isEst ? EST_COL : NEW_COL;
-        const compObj = S.components.find(cc => cc.id===cid);
-        const label = (compObj?.name || cid).slice(0,17);
-        const sy = SYM_START + ri*SYM_ROW + SYM_BOX/2;
-        const sbX = px + 6, sbY = sy - SYM_BOX/2;
-        s += '<rect x="'+sbX+'" y="'+sbY+'" width="'+SYM_BOX+'" height="'+SYM_BOX+'" rx="4" fill="#0d1520" stroke="'+col+'" stroke-width="1.5"/>';
-        s += makeSym(cid, sbX+SYM_BOX/2, sy, col);
-        const lbX = sbX + SYM_BOX + 6, lbY = sy - 9;
-        s += '<rect x="'+lbX+'" y="'+lbY+'" width="'+LBL_W+'" height="18" rx="3" fill="#0d1520" stroke="'+col+'" stroke-width="1"/>';
-        s += '<text x="'+(lbX+8)+'" y="'+(sy+4)+'" fill="'+col+'" font-size="9" font-weight="bold" font-family="monospace">'+esc(label)+'</text>';
-        const bdX = lbX + LBL_W - 22;
-        s += '<text x="'+(bdX+10)+'" y="'+(sy+4)+'" fill="'+col+'" font-size="9" text-anchor="middle" font-weight="bold" font-family="monospace">×'+cnt+'</text>';
-      });
-    }
+    // Track per-zone offsets so multiple components in same zone fan out horizontally
+    const zoneCount = {top:0, arm:0, upper:0, mid:0, stay:0, ground:0, line:0};
+
+    compEntries.forEach(([cid, cnt]) => {
+      if (cid === 'pole' || cid === 'cross_arm') return;   // structural — drawn separately above
+      const zone = ZONE[cid] || 'mid';
+      const isEst = estIds.has(cid);
+      const col = isEst ? EST_COL : NEW_COL;
+      const idx = zoneCount[zone]++;
+      // Spread within zone: alternate sides
+      const lat = (idx === 0 ? 0 : (idx % 2 === 1 ? -1 : 1) * Math.ceil(idx/2) * 14);
+
+      let cx = px + lat, cy;
+      switch (zone) {
+        case 'top':    cy = ARM_Y - 18; break;
+        case 'arm':    cx = px + (idx === 0 ? -10 : (idx === 1 ? 10 : 0)); cy = ARM_Y; break;
+        case 'upper':  cy = ARM_Y + 22; break;
+        case 'mid':    cy = ARM_Y + 50; break;
+        case 'stay':   cx = px + 18; cy = ARM_Y + 14; break;
+        case 'ground': cx = px + 18; cy = GROUND_Y - 6; break;
+        case 'line':   cy = ARM_Y; cx = px - 22; break;
+        default:       cy = ARM_Y + 60;
+      }
+      // Symbol — no boxing rectangle, just the glyph in colour. Multiplier "×N" appended if >1.
+      s += makeSym(cid, cx, cy, col);
+      if (cnt > 1) {
+        s += '<text x="'+(cx+9)+'" y="'+(cy+4)+'" fill="'+col+'" font-size="8" font-weight="bold" font-family="monospace">×'+cnt+'</text>';
+      }
+      // Stay-wire: draw the actual diagonal line down to ground
+      if (zone === 'stay' && idx === 0) {
+        s += '<line x1="'+(px)+'" y1="'+(ARM_Y+5)+'" x2="'+(px+22)+'" y2="'+(GROUND_Y-2)+'" stroke="'+col+'" stroke-width="1.5" stroke-dasharray="3,2" opacity="0.7"/>';
+      }
+      // Earth rod: draw line from pole base down past ground
+      if (zone === 'ground' && cid === 'earth_rod' && idx === 0) {
+        s += '<line x1="'+px+'" y1="'+GROUND_Y+'" x2="'+px+'" y2="'+(GROUND_Y+18)+'" stroke="'+col+'" stroke-width="1.5"/>';
+      }
+    });
+
+    // ── Compact component LIST below pole (for clarity / reference) ──
+    let listY = LBL_LIST_Y;
+    compEntries.forEach(([cid, cnt]) => {
+      const isEst = estIds.has(cid);
+      const col = isEst ? EST_COL : NEW_COL;
+      const compObj = S.components.find(cc => cc.id===cid);
+      const label = (compObj?.name || cid).slice(0,14);
+      s += '<text x="'+(px - PLATE_W/2 + 4)+'" y="'+listY+'" fill="'+col+'" font-size="8" font-family="monospace">'+esc(label)+' ×'+cnt+'</text>';
+      listY += 12;
+    });
   });
+
   s += '</svg>';
   host.innerHTML = s;
+}
+
+// ── Determine the GPS source of a pole ──
+function poleGpsSource(p) {
+  if (!p.lat) return 'none';
+  if (p.gpsSource) return p.gpsSource;       // explicit (set by GPX snap, manual entry, etc.)
+  if (p.pinnedManually) return 'pinned';
+  if (p.gps && p.gps.manual) return 'manual';
+  return 'phone';
 }
 
 function exportSVG() {
@@ -2279,9 +2433,14 @@ const TILE_LAYERS = {
   topo: {url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr:'&copy; OpenTopoMap'}
 };
 
-function poleIcon(poleType, hasGPS) {
+function poleIcon(poleType, hasGPS, gpsSource) {
   // Slim, high-contrast pole marker.
-  const fillCol = hasGPS ? (poleType==='existing' ? '#bbbbbb' : '#ffce00') : '#ff5544';
+  // TwoNav-sourced poles get a BLUE fill to distinguish from phone GPS.
+  let fillCol;
+  if (!hasGPS) fillCol = '#ff5544';
+  else if (gpsSource === 'twonav') fillCol = '#4a9eff';
+  else if (poleType === 'existing') fillCol = '#bbbbbb';
+  else fillCol = '#ffce00';
   const inner = {psc:'P',wooden:'W',gi:'G',rcc:'R',existing:'E',corner:'C',terminal:'T',tee:'Y'}[poleType] || 'P';
   // Smaller footprint: 22×30 viewport, 9px circle radius.
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="30" viewBox="0 0 22 30">
@@ -2386,6 +2545,196 @@ function onMapClick(e) {
   renderPoleList();
 }
 
+// ══════════════════════════════════════════════════════
+// ▼▼▼ TWONAV GPX IMPORT + SNAP-TO-TRACK ▼▼▼
+// Workflow:
+//   1. User records track on TwoNav GPS while surveying poles
+//   2. Exports as GPX, imports here
+//   3. App parses GPX to a trackpoint array, draws it on the Leaflet map as
+//      a high-contrast polyline so user can see vs phone-GPS poles
+//   4. "Snap" replaces a pole's lat/lng with the nearest trackpoint and tags
+//      gpsSource='twonav'. Snapping recalculates spans between adjacent poles.
+// ══════════════════════════════════════════════════════
+let gpxTrack = null;          // [{lat, lng, ele?, time?}, ...]
+let gpxTrackLayer = null;     // Leaflet polyline
+let gpxTrackVisible = true;
+window.gpsSourceFilter = 'all';   // 'all' | 'twonav' | 'phone'
+
+function importGPX(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const xml = new DOMParser().parseFromString(e.target.result, 'text/xml');
+      const errNode = xml.querySelector('parsererror');
+      if (errNode) throw new Error('Invalid GPX file');
+
+      // GPX trackpoints can be in <trkpt> (track) or <rtept> (route) or <wpt> (waypoints)
+      const pts = [];
+      xml.querySelectorAll('trkpt, rtept').forEach(node => {
+        const lat = parseFloat(node.getAttribute('lat'));
+        const lng = parseFloat(node.getAttribute('lon'));
+        if (!isNaN(lat) && !isNaN(lng)) {
+          const ele = parseFloat(node.querySelector('ele')?.textContent) || null;
+          const time = node.querySelector('time')?.textContent || null;
+          pts.push({lat, lng, ele, time});
+        }
+      });
+
+      if (!pts.length) {
+        toast('⚠ No track points found in GPX', '#ff5544');
+        document.getElementById('gpx-status').innerHTML = '⚠ No &lt;trkpt&gt; or &lt;rtept&gt; in file. TwoNav exports usually contain these — re-export from TwoNav as GPX 1.1 track.';
+        return;
+      }
+
+      gpxTrack = pts;
+      pSet('gpxTrack', pts);   // persist per-project so it survives reload
+
+      const distKm = computeTrackLength(pts) / 1000;
+      const status =
+        '✅ Imported <b>' + pts.length + '</b> trackpoints · <b>' + distKm.toFixed(2) + ' km</b>' +
+        (pts[0].time ? '<br>📅 Recorded ' + new Date(pts[0].time).toLocaleDateString() : '');
+      document.getElementById('gpx-status').innerHTML = status;
+
+      document.getElementById('gpx-show-btn').style.display = '';
+      document.getElementById('snap-all-btn').style.display = '';
+      document.getElementById('gpx-clear-btn').style.display = '';
+      gpxTrackVisible = true;
+      document.getElementById('gpx-show-btn').textContent = '👁 Hide track';
+
+      toast('📡 ' + pts.length + ' trackpoints loaded', '#4a9eff');
+      refreshMap();
+      // Auto-fit to track if no poles yet have GPS
+      if (leafletMap && pts.length && !S.poles.some(p => p.lat)) {
+        const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lng]));
+        leafletMap.fitBounds(bounds, {padding:[30,30]});
+      }
+    } catch (err) {
+      toast('⚠ GPX parse error', '#ff5544');
+      document.getElementById('gpx-status').textContent = '⚠ ' + err.message;
+    }
+  };
+  reader.readAsText(file);
+  // Allow re-import of the same file later
+  document.getElementById('gpx-file-input').value = '';
+}
+
+function computeTrackLength(pts) {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) {
+    d += haversine(pts[i-1].lat, pts[i-1].lng, pts[i].lat, pts[i].lng);
+  }
+  return d;
+}
+
+function toggleGpxTrack() {
+  gpxTrackVisible = !gpxTrackVisible;
+  document.getElementById('gpx-show-btn').textContent = gpxTrackVisible ? '👁 Hide track' : '👁 Show track';
+  refreshMap();
+}
+
+function clearGPX() {
+  if (!confirm('Clear imported GPX track? Pole locations already snapped will keep their TwoNav coordinates.')) return;
+  gpxTrack = null;
+  pSet('gpxTrack', null);
+  document.getElementById('gpx-show-btn').style.display = 'none';
+  document.getElementById('snap-all-btn').style.display = 'none';
+  document.getElementById('gpx-clear-btn').style.display = 'none';
+  document.getElementById('gpx-status').textContent = 'No GPX imported.';
+  refreshMap();
+  toast('Track cleared');
+}
+
+// Find nearest trackpoint to a given lat/lng. Returns {point, dist} or null.
+function nearestTrackPoint(lat, lng) {
+  if (!gpxTrack || !gpxTrack.length) return null;
+  let best = null, bestD = Infinity;
+  for (const pt of gpxTrack) {
+    const d = haversine(lat, lng, pt.lat, pt.lng);
+    if (d < bestD) { bestD = d; best = pt; }
+  }
+  return best ? {point: best, dist: bestD} : null;
+}
+
+function snapPoleToTrack(poleId) {
+  if (!gpxTrack || !gpxTrack.length) { toast('⚠ Import GPX first', '#ff5544'); return; }
+  const pole = S.poles.find(p => p.id === poleId);
+  if (!pole) return;
+  // If pole has no GPS, snap by location proximity is impossible.
+  // For pinned/phone-GPS poles: snap to nearest. For no-GPS: ask user to pin first OR snap by index.
+  if (!pole.lat) {
+    toast('⚠ Pole has no GPS yet. Use 📍 pin first or record GPS, then snap.', '#ff5544');
+    return;
+  }
+  const near = nearestTrackPoint(pole.lat, pole.lng);
+  if (!near) { toast('⚠ Track empty'); return; }
+  // Warn if track is far from pole — likely a mismatch
+  if (near.dist > 100) {
+    if (!confirm('Nearest TwoNav trackpoint is ' + near.dist.toFixed(0) + 'm away from ' + pole.code + '. Likely the track doesn\'t cover this pole. Snap anyway?')) return;
+  }
+  pole.lat = near.point.lat;
+  pole.lng = near.point.lng;
+  pole.acc = 3;   // TwoNav accuracy
+  pole.gpsSource = 'twonav';
+  pole.pinnedManually = false;
+  recalcAdjacentSpans(pole);
+  pSet('poles', S.poles);
+  toast('🎯 ' + pole.code + ' snapped (was ' + near.dist.toFixed(1) + 'm off)', '#4a9eff');
+  if (navigator.vibrate) navigator.vibrate(40);
+  refreshMap(); renderPoleList();
+}
+
+function snapAllPoles() {
+  if (!gpxTrack || !gpxTrack.length) { toast('⚠ Import GPX first', '#ff5544'); return; }
+  const candidates = S.poles.filter(p => p.lat);
+  if (!candidates.length) { toast('⚠ No poles with GPS yet'); return; }
+  const farPoles = [];
+  let snapped = 0;
+  candidates.forEach(p => {
+    const near = nearestTrackPoint(p.lat, p.lng);
+    if (!near) return;
+    if (near.dist > 100) { farPoles.push(p.code + ' (' + near.dist.toFixed(0) + 'm)'); return; }
+    p.lat = near.point.lat;
+    p.lng = near.point.lng;
+    p.acc = 3;
+    p.gpsSource = 'twonav';
+    p.pinnedManually = false;
+    snapped++;
+  });
+  // Recalc spans for snapped poles
+  S.poles.forEach(p => { if (p.gpsSource === 'twonav') recalcAdjacentSpans(p); });
+  pSet('poles', S.poles);
+  let msg = '🎯 Snapped ' + snapped + ' pole(s) to TwoNav track';
+  if (farPoles.length) msg += ' · Skipped ' + farPoles.length + ' (too far from track)';
+  toast(msg, '#4a9eff');
+  refreshMap(); renderPoleList();
+}
+
+function recalcAdjacentSpans(pole) {
+  const idx = S.poles.indexOf(pole);
+  if (idx > 0) {
+    const prev = S.poles[idx-1];
+    if (prev.lat && prev.lng && pole.connectedToPrev !== false) {
+      pole.span = +haversine(prev.lat, prev.lng, pole.lat, pole.lng).toFixed(1);
+    }
+  }
+  if (idx < S.poles.length - 1) {
+    const nxt = S.poles[idx+1];
+    if (nxt.lat && nxt.lng && nxt.connectedToPrev !== false) {
+      nxt.span = +haversine(pole.lat, pole.lng, nxt.lat, nxt.lng).toFixed(1);
+    }
+  }
+}
+
+function setGpsSourceFilter(filter) {
+  window.gpsSourceFilter = filter;
+  refreshMap();
+  // If SLD diagram is currently rendered, redraw
+  if (document.getElementById('sld-svg')) renderSLD();
+}
+
+// ══════════════════════════════════════════════════════
+
 function refreshMap() {
   if (!leafletMap) return;
   // Clear existing
@@ -2393,8 +2742,28 @@ function refreshMap() {
   mapPolylines.forEach(p => leafletMap.removeLayer(p));
   mapOverlayLayers.forEach(l => leafletMap.removeLayer(l));
   mapMarkers = []; mapPolylines = []; mapOverlayLayers = [];
+  if (gpxTrackLayer) { leafletMap.removeLayer(gpxTrackLayer); gpxTrackLayer = null; }
 
-  const polesWithGPS = S.poles.filter(p => p.lat && p.lng);
+  // ── Draw GPX track if loaded and visible ──
+  if (gpxTrack && gpxTrack.length && gpxTrackVisible) {
+    const trackCoords = gpxTrack.map(pt => [pt.lat, pt.lng]);
+    // Shadow + main line for high visibility on any tile type
+    const shadow = L.polyline(trackCoords, {color:'#000', weight:7, opacity:0.5}).addTo(leafletMap);
+    const main = L.polyline(trackCoords, {color:'#4a9eff', weight:4, opacity:0.95}).addTo(leafletMap);
+    main.bindPopup('<b style="color:#4a9eff">📡 TwoNav GPS track</b><br>' + gpxTrack.length + ' points · ' + (computeTrackLength(gpxTrack)/1000).toFixed(2) + ' km');
+    gpxTrackLayer = L.layerGroup([shadow, main]).addTo(leafletMap);
+    mapOverlayLayers.push(shadow);
+    mapOverlayLayers.push(main);
+  }
+
+  // Apply GPS-source filter on top of has-coordinates filter
+  let allWithGPS = S.poles.filter(p => p.lat && p.lng);
+  let polesWithGPS = allWithGPS;
+  if (window.gpsSourceFilter === 'twonav') {
+    polesWithGPS = allWithGPS.filter(p => poleGpsSource(p) === 'twonav');
+  } else if (window.gpsSourceFilter === 'phone') {
+    polesWithGPS = allWithGPS.filter(p => poleGpsSource(p) !== 'twonav');
+  }
   const polesWithoutGPS = S.poles.filter(p => !p.lat || !p.lng);
 
   const noGPS = document.getElementById('no-gps-poles');
@@ -2415,11 +2784,11 @@ function refreshMap() {
   // Update badge to show both counts honestly
   const badge = document.getElementById('map-stats-badge');
   if (badge) {
-    badge.innerHTML = '<b>'+polesWithGPS.length+'</b> on map' + (polesWithoutGPS.length ? ' · <b style="color:var(--warn)">'+polesWithoutGPS.length+'</b> need pin' : '');
+    const filterTag = window.gpsSourceFilter !== 'all' ? ' <span style="color:#4a9eff">[' + (window.gpsSourceFilter === 'twonav' ? '📡 TwoNav' : '📱 Phone') + ']</span>' : '';
+    badge.innerHTML = '<b>'+polesWithGPS.length+'</b> on map' + filterTag + (polesWithoutGPS.length ? ' · <b style="color:var(--warn)">'+polesWithoutGPS.length+'</b> need pin' : '');
   }
 
   if (!polesWithGPS.length) {
-    // Still nothing to draw, but the no-GPS list above gives the user a path forward.
     return;
   }
 
@@ -2469,14 +2838,28 @@ function refreshMap() {
       return '<span class="pole-popup-comp">'+esc(name)+' ×'+e[1]+'</span>';
     }).join('');
 
+    const srcCode = poleGpsSource(p);
+    const srcBadge = srcCode === 'twonav'
+      ? '<span style="background:#4a9eff;color:#fff;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700">📡 TwoNav</span>'
+      : srcCode === 'pinned'
+      ? '<span style="background:var(--acc);color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700">📌 Pinned</span>'
+      : srcCode === 'manual'
+      ? '<span style="background:#a78bfa;color:#fff;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700">✍ Manual</span>'
+      : '<span style="background:var(--i3);color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700">📱 Phone</span>';
+
+    const snapBtn = gpxTrack && gpxTrack.length && srcCode !== 'twonav'
+      ? '<button onclick="snapPoleToTrack(\''+esc(p.id)+'\')" style="background:#4a9eff;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;margin-top:5px">🎯 Snap to TwoNav track</button>'
+      : '';
+
     const popupHTML =
-      '<div class="pole-popup-code">'+esc(p.code)+'</div>' +
+      '<div class="pole-popup-code">'+esc(p.code)+' '+srcBadge+'</div>' +
       '<div class="pole-popup-row"><b>'+esc(p.location||'—')+'</b> · '+(p.poleType||'—')+(p.span?' · '+p.span+'m':'')+'</div>' +
       '<div class="pole-popup-row" style="font-size:10px">📍 '+p.lat.toFixed(6)+', '+p.lng.toFixed(6)+(p.acc?' ±'+p.acc.toFixed(1)+'m':'')+(p.samples?' ('+p.samples+' samples)':'')+'</div>' +
       (p.remarks ? '<div class="pole-popup-row" style="margin-top:3px;font-style:italic">'+esc(p.remarks)+'</div>' : '') +
-      (compHTML ? '<div style="margin-top:5px;line-height:1.8">'+compHTML+'</div>' : '');
+      (compHTML ? '<div style="margin-top:5px;line-height:1.8">'+compHTML+'</div>' : '') +
+      snapBtn;
 
-    const marker = L.marker([p.lat, p.lng], {icon:poleIcon(p.poleType, true)}).bindPopup(popupHTML, {maxWidth:280,minWidth:200}).addTo(leafletMap);
+    const marker = L.marker([p.lat, p.lng], {icon:poleIcon(p.poleType, true, srcCode)}).bindPopup(popupHTML, {maxWidth:280,minWidth:200}).addTo(leafletMap);
     mapMarkers.push(marker);
 
     // ── SLD SYMBOL CLUSTER beside each pole ──
@@ -2718,7 +3101,15 @@ async function exportCombinedPDF() {
         doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(255,206,0);
         doc.text('FieldGrid — ' + proj, 10, 10);
         doc.setFontSize(9); doc.setTextColor(160,160,152);
-        doc.text('Map + SLD Overlay · ' + dateStr + ' · ' + S.poles.length + ' poles', 10, 17);
+        const filterTag = window.gpsSourceFilter && window.gpsSourceFilter !== 'all'
+          ? ' · FILTER: ' + (window.gpsSourceFilter === 'twonav' ? 'TwoNav GPS only' : 'Phone GPS only')
+          : '';
+        const visiblePoles = window.gpsSourceFilter === 'twonav'
+          ? S.poles.filter(p => poleGpsSource(p) === 'twonav').length
+          : window.gpsSourceFilter === 'phone'
+          ? S.poles.filter(p => p.lat && poleGpsSource(p) !== 'twonav').length
+          : S.poles.length;
+        doc.text('Map + SLD Overlay · ' + dateStr + ' · ' + visiblePoles + ' poles' + filterTag, 10, 17);
         doc.addImage(mapImg, 'JPEG', 0, 22, W, H-26);
       } catch(e) { console.error(e); }
     }
