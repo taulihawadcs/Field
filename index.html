@@ -12,6 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
@@ -344,22 +345,24 @@ td b{color:var(--primary)}
   </div>
 
   <!-- Pole fields -->
-  <div class="g2" style="margin-bottom:10px">
-    <div>
-      <label class="lbl" style="margin-top:0">Pole Code
-        <span id="pole-code-suggest" style="font-size:9px;color:var(--text3);font-weight:400;text-transform:none;margin-left:6px"></span>
-      </label>
-      <input id="inp-code" placeholder="e.g. wpt001" style="font-weight:700;font-size:14px;color:var(--primary);border-color:var(--primary)" autocomplete="off" autocorrect="off" spellcheck="false">
-    </div>
-    <div>
-      <label class="lbl" style="margin-top:0">Span (m)</label>
-      <input id="inp-span" placeholder="e.g. 45" type="number" step="0.1" inputmode="decimal" oninput="this.dataset.userTyped='1'">
-      <div id="inp-span-hint" style="font-size:10px;color:var(--text3);margin-top:3px;min-height:13px"></div>
-    </div>
+  <div style="margin-bottom:10px">
+    <label class="lbl" style="margin-top:0">Pole Code
+      <span id="pole-code-suggest" style="font-size:9px;color:var(--text3);font-weight:400;text-transform:none;margin-left:6px"></span>
+    </label>
+    <input id="inp-code" placeholder="e.g. wpt001" style="font-weight:700;font-size:14px;color:var(--primary);border-color:var(--primary)" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div style="font-size:10px;color:var(--text3);margin-top:3px">Span is taken automatically from the matched GPX waypoint — no need to enter it here.</div>
   </div>
 
   <label class="lbl">Location / Area</label>
   <select id="inp-loc" onchange="onLocationChange()"><option value="">— select location —</option></select>
+
+  <label class="lbl">Photo</label>
+  <input id="inp-photo-file" type="file" accept="image/*" capture="environment" style="display:none" onchange="onPhotoPicked(event)">
+  <div class="g2" style="margin-bottom:4px">
+    <button type="button" class="btn bo sm" onclick="document.getElementById('inp-photo-file').click()"><i class="fa fa-camera"></i> Take / choose photo</button>
+    <button type="button" class="btn bo sm" id="photo-clear-btn" onclick="clearPhoto()" style="display:none"><i class="fa fa-times"></i> Remove photo</button>
+  </div>
+  <div id="photo-preview" style="margin-bottom:8px"></div>
 
   <label class="lbl">Remarks</label>
   <textarea id="inp-rem" placeholder="Notes, issues, observations…"></textarea>
@@ -692,7 +695,6 @@ function onGPSReading(pos){
   const avgLat=recent.reduce((a,x)=>a+x.lat,0)/recent.length,avgLng=recent.reduce((a,x)=>a+x.lng,0)/recent.length;
   document.getElementById('gco').className='gco';document.getElementById('gco').textContent=avgLat.toFixed(6)+', '+avgLng.toFixed(6);
   updateGPSPill('live','±'+r.acc.toFixed(0)+'m');
-  updateLiveSpan(r);
   if(r.acc<=GPS_TARGET_ACC&&gpsSession.readings.length>=GPS_MIN_READS)autoLockGPS();
 }
 function onGPSError(err){
@@ -784,20 +786,6 @@ function showGPSStatus(msg,type){
   box.style.background=bgs[type]||bgs.info;box.style.border='1px solid '+(type==='warn'?'#f5c6c2':type==='ok'?'#a9dfbf':'var(--border)');
   box.style.color=cols[type]||cols.info;box.style.whiteSpace='pre-wrap';box.textContent=msg;
 }
-function updateLiveSpan(reading){
-  const spanInput=document.getElementById('inp-span'),spanHint=document.getElementById('inp-span-hint');
-  if(!spanInput||!spanHint)return;
-  if(!S.poles||!S.poles.length){spanHint.textContent='First pole';spanHint.style.color='var(--text3)';return;}
-  const last=S.poles[S.poles.length-1];
-  if(!last.lat||!last.lng){spanHint.textContent='Previous pole has no GPS';spanHint.style.color='var(--warn)';return;}
-  const ref=reading||(gpsSession&&gpsSession.best)||null;
-  if(!ref){spanHint.textContent='Waiting for GPS…';return;}
-  const dist=haversine(last.lat,last.lng,ref.lat,ref.lng);
-  if(!spanInput.dataset.userTyped)spanInput.value=dist.toFixed(1);
-  spanHint.textContent='📐 Live: '+dist.toFixed(1)+'m from '+last.code+' (±'+(ref.acc||0).toFixed(0)+'m)';
-  spanHint.style.color='var(--success)';
-}
-
 // ═══════════════════════════════════════════
 // FILE UPLOAD & PARSE
 // ═══════════════════════════════════════════
@@ -1033,7 +1021,7 @@ function resetRecordSession(){
   if(!confirm('Clear current form and counters? Saved poles NOT affected.'))return;
   const codeEl=document.getElementById('inp-code');
   if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
-  document.getElementById('inp-span').value='';document.getElementById('inp-rem').value='';
+  document.getElementById('inp-rem').value='';
   document.getElementById('inp-loc').value='';
   S.counters={};S.components.forEach(c=>S.counters[c.id]=0);
   S.cableConnect=null;
@@ -1085,12 +1073,15 @@ function savePole(){
     const cp=document.getElementById('cable-prompt');if(cp){cp.classList.add('sh');cp.scrollIntoView({behavior:'smooth',block:'center'});}
     return;
   }
-  let span=parseFloat(document.getElementById('inp-span').value)||null;
+  // Span is NOT entered manually anymore — it is filled in automatically when the pole
+  // is matched to its GPX waypoint (within the same location). New poles start with null.
+  let span=null;
   const pole={
     id:genId(),code,location:loc,span,
     lat:null,lng:null,acc:null,samples:null,
     poleType:'',
     remarks:document.getElementById('inp-rem').value.trim(),
+    photo:stagedPhoto||null,           // resized JPEG data-URL, or null
     components:Object.assign({},S.counters),
     connectedToPrev:isFirstInLoc?null:(S.cableConnect===true),
     recordedAt:new Date().toISOString()
@@ -1098,11 +1089,71 @@ function savePole(){
   S.poles.push(pole);pSet('poles',S.poles);
   toast('✅ Saved '+code);
   if(navigator.vibrate)navigator.vibrate(40);
-  const spanEl=document.getElementById('inp-span');spanEl.value='';delete spanEl.dataset.userTyped;
   document.getElementById('inp-rem').value='';
+  clearPhoto();
   // Mark code field for auto-refill
   if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
   updatePoleCodeDisplay();resetCtrs();renderPoleList();showCablePrompt();
+}
+
+// ═══════════════════════════════════════════
+// PHOTO CAPTURE  (resized & stored per pole)
+// ═══════════════════════════════════════════
+let stagedPhoto=null;       // data-URL waiting to attach to the next saved pole
+const PHOTO_MAX=900;        // longest edge in px after downscale
+const PHOTO_QUALITY=0.72;   // JPEG quality
+
+function resizeImageToDataURL(file,maxEdge,quality){
+  return new Promise((resolve,reject)=>{
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        let{width:w,height:h}=img;
+        if(w>h){if(w>maxEdge){h=Math.round(h*maxEdge/w);w=maxEdge;}}
+        else{if(h>maxEdge){w=Math.round(w*maxEdge/h);h=maxEdge;}}
+        const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+        const ctx=cv.getContext('2d');
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img,0,0,w,h);
+        resolve(cv.toDataURL('image/jpeg',quality));
+      };
+      img.onerror=()=>reject(new Error('Bad image'));
+      img.src=fr.result;
+    };
+    fr.onerror=()=>reject(new Error('Read failed'));
+    fr.readAsDataURL(file);
+  });
+}
+
+async function onPhotoPicked(ev){
+  const file=ev.target.files&&ev.target.files[0];
+  if(!file)return;
+  try{
+    stagedPhoto=await resizeImageToDataURL(file,PHOTO_MAX,PHOTO_QUALITY);
+    renderPhotoPreview();
+    toast('📷 Photo attached','#00a86b');
+  }catch(e){toast('⚠ '+e.message);}
+  ev.target.value=''; // allow re-pick of same file
+}
+
+function clearPhoto(){
+  stagedPhoto=null;
+  const f=document.getElementById('inp-photo-file');if(f)f.value='';
+  renderPhotoPreview();
+}
+
+function renderPhotoPreview(){
+  const box=document.getElementById('photo-preview');
+  const clr=document.getElementById('photo-clear-btn');
+  if(!box)return;
+  if(stagedPhoto){
+    box.innerHTML='<img src="'+stagedPhoto+'" alt="pole photo" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid var(--border)">';
+    if(clr)clr.style.display='';
+  }else{
+    box.innerHTML='';
+    if(clr)clr.style.display='none';
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -1122,9 +1173,15 @@ function startEditPole(id){
   html+='</select>';
   html+=`<label class="lbl">Components</label>`;
   S.components.forEach(c=>{const v=pole.components?.[c.id]||0;html+=`<div class="cc${v>0?' hv':''}" style="margin-bottom:4px"><div class="nm">${esc(c.name)}<div class="mt">${esc(c.unit)}</div></div><div class="ctrl"><button onclick="epBump('${c.id}',-1)">−</button><div class="vl" id="ep-cv-${c.id}">${v}</div><button onclick="epBump('${c.id}',1)">＋</button></div></div>`;});
+  // Photo editor
+  html+=`<label class="lbl">Photo</label>`;
+  html+=`<input id="ep-photo-file" type="file" accept="image/*" capture="environment" style="display:none" onchange="epPhotoPicked(event)">`;
+  html+=`<div class="g2" style="margin-bottom:4px"><button type="button" class="btn bo sm" onclick="document.getElementById('ep-photo-file').click()"><i class="fa fa-camera"></i> Take / choose</button><button type="button" class="btn bo sm" id="ep-photo-clear" onclick="epClearPhoto()"${pole.photo?'':' style="display:none"'}><i class="fa fa-times"></i> Remove</button></div>`;
+  html+=`<div id="ep-photo-preview" style="margin-bottom:8px">${pole.photo?'<img src="'+pole.photo+'" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid var(--border)">':''}</div>`;
   panel.querySelector('#edit-panel-body').innerHTML=html;
   // Store current values for editing
   window._editComps=Object.assign({},pole.components||{});
+  window._editPhoto=pole.photo||null;
   panel.classList.add('show');
   panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -1135,12 +1192,30 @@ function epBump(id,d){
   const re=document.querySelector(`#edit-panel-body .cc`+id);// update class
   document.querySelectorAll('#edit-panel-body .cc').forEach(el=>{const cid=el.querySelector('[id^="ep-cv-"]')?.id?.replace('ep-cv-','');if(cid===id)el.className='cc'+(v>0?' hv':'');});
 }
+async function epPhotoPicked(ev){
+  const file=ev.target.files&&ev.target.files[0];if(!file)return;
+  try{
+    window._editPhoto=await resizeImageToDataURL(file,PHOTO_MAX,PHOTO_QUALITY);
+    const box=document.getElementById('ep-photo-preview');
+    if(box)box.innerHTML='<img src="'+window._editPhoto+'" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid var(--border)">';
+    const clr=document.getElementById('ep-photo-clear');if(clr)clr.style.display='';
+    toast('📷 Photo attached','#00a86b');
+  }catch(e){toast('⚠ '+e.message);}
+  ev.target.value='';
+}
+function epClearPhoto(){
+  window._editPhoto=null;
+  const box=document.getElementById('ep-photo-preview');if(box)box.innerHTML='';
+  const clr=document.getElementById('ep-photo-clear');if(clr)clr.style.display='none';
+  const f=document.getElementById('ep-photo-file');if(f)f.value='';
+}
 function saveEdit(){
   if(!editingPoleId)return;
   const pole=S.poles.find(p=>p.id===editingPoleId);if(!pole)return;
   pole.remarks=document.getElementById('ep-rem')?.value?.trim()||'';
   pole.poleType=document.getElementById('ep-type')?.value||pole.poleType;
   pole.components=Object.assign({},window._editComps||{});
+  pole.photo=window._editPhoto||null;
   pSet('poles',S.poles);toast('✅ '+pole.code+' updated');
   cancelEdit();renderPoleList();
 }
@@ -1163,6 +1238,7 @@ function renderPoleList(){
         ${gpsLine}
         ${compsLine?'<br>'+compsLine:''}
         ${p.remarks?'<br><span style="color:var(--text3);font-size:10px">'+esc(p.remarks)+'</span>':''}
+        ${p.photo?'<br><img src="'+p.photo+'" style="margin-top:4px;max-width:64px;max-height:64px;border-radius:4px;border:1px solid var(--border)">':''}
       </div>
       <div class="pra">
         <button class="ex" onclick="startEditPole('${p.id}')"><i class="fa fa-pen"></i></button>
@@ -1282,8 +1358,8 @@ function onMapClick(e){
   const pole=S.poles.find(p=>p.id===pinPoleTarget);if(!pole){cancelPinMode();return;}
   pole.lat=+e.latlng.lat.toFixed(7);pole.lng=+e.latlng.lng.toFixed(7);pole.pinnedManually=true;
   const idx=S.poles.indexOf(pole);
-  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
-  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
   pSet('poles',S.poles);toast('📍 '+pinPoleCode+' pinned','#00a86b');if(navigator.vibrate)navigator.vibrate(40);
   pinPoleTarget=null;pinPoleCode=null;document.getElementById('pole-map').style.cursor='';
   refreshMap();renderPoleList();
@@ -1701,8 +1777,8 @@ function snapAllPoles(){
 }
 function recalcAdjacentSpans(pole){
   const idx=S.poles.indexOf(pole);
-  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
-  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
 }
 
 // ═══════════════════════════════════════════
@@ -2040,187 +2116,140 @@ function centerSheet(ws){
     }
   }
 }
-function expXLSX(){
+async function expXLSX(){
   if(!S.poles.length&&!S.components.length){toast('⚠ No data');return;}
+  if(typeof ExcelJS==='undefined'){toast('⚠ Excel engine still loading, try again');return;}
+  toast('⏳ Building Excel…');
 
-  // ── Totals per component across all poles ──
+  // Totals per component across all poles
   const tot={};S.components.forEach(c=>tot[c.id]=0);
   S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
-
-  // ── Only components actually used (field qty > 0 OR estimate > 0) ──
   const usedComps=S.components.filter(c=>(tot[c.id]||0)>0||(c.est||0)>0);
   const usedIds=usedComps.map(c=>c.id);
   const usedNames=usedComps.map(c=>c.name);
-
-  const wb=XLSX.utils.book_new();
   const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
   const locations=[...new Set(S.poles.map(p=>p.location).filter(Boolean))];
   const dateStr=today();
 
-  // ── Style presets matching the reference template ──
-  const FONT12={name:'Calibri',sz:12};
-  const FONT12B={name:'Calibri',sz:12,bold:true};
-  const FONT14B={name:'Calibri',sz:14,bold:true};
-  const ALIGN_C={horizontal:'center',vertical:'center',wrapText:true};
-  const BTHIN={style:'thin',color:{rgb:'000000'}};
-  const BMED={style:'medium',color:{rgb:'000000'}};
-  const borderAll=(t,r,b,l,style)=>{
-    const s=style||BTHIN;
-    return{
-      top:t?s:undefined,
-      right:r?s:undefined,
-      bottom:b?s:undefined,
-      left:l?s:undefined
-    };
-  };
-  // Set every cell in a rectangular range to thin-border all-around + center + font12
-  const styleRangeAsTable=(ws,r0,r1,c0,c1,opts)=>{
-    opts=opts||{};
-    for(let R=r0;R<=r1;R++){
-      for(let C=c0;C<=c1;C++){
-        const addr=XLSX.utils.encode_cell({r:R,c:C});
-        if(!ws[addr])ws[addr]={t:'s',v:''};
-        ws[addr].s={
-          font:(opts.headerRows&&opts.headerRows.includes(R))?FONT12B:FONT12,
-          alignment:ALIGN_C,
-          border:{top:BTHIN,right:BTHIN,bottom:BTHIN,left:BTHIN}
-        };
-      }
+  // ── Style helpers (ExcelJS) ──
+  const BT={style:'thin',color:{argb:'FF000000'}};
+  const BM={style:'medium',color:{argb:'FF000000'}};
+  const F12={name:'Calibri',size:12};
+  const F12B={name:'Calibri',size:12,bold:true};
+  const F14B={name:'Calibri',size:14,bold:true};
+  const CEN={horizontal:'center',vertical:'middle',wrapText:true};
+  const thinAll={top:BT,left:BT,bottom:BT,right:BT};
+  const tableStyle=(ws,r0,r1,c0,c1,headerRows)=>{
+    for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){
+      const cell=ws.getCell(r,c);
+      cell.font=(headerRows&&headerRows.includes(r))?F12B:F12;
+      cell.alignment=CEN; cell.border=thinAll;
     }
   };
 
-  // ════════════════════════════════════════
-  // SHEET 1 — SDS (Structural Data Sheet)
-  // ════════════════════════════════════════
-  // Title block rows 1-7 (0-indexed 0..6), gap row 8 (idx 7), table header row 9 (idx 8), then data
-  const sdsRows=[
-    ['NEPAL ELECTRICITY AUTHORITY','','','',''],
-    ['Distribution and Consumer Services Directorate','','','',''],
-    ['Lumbini Provincial Office, Butwal','','','',''],
-    ['Taulihawa Distribution Center','','','',''],
-    ['FY: 2081/82','','','',''],
-    ['Works At: '+locations.join(', '),'','','',''],
-    ['STRUCTURAL DATA SHEET (SDS)','','','',''],
-    ['','','','',''],
-    ['S.N.','Description of Item','Unit','Qty (Field)','Est. Qty'],
-    ...usedComps.map((c,i)=>[i+1,c.name,c.unit,tot[c.id]||0,c.est||0])
+  const wb=new ExcelJS.Workbook();
+
+  // ════════════════ SHEET 1 — SDS ════════════════
+  const sds=wb.addWorksheet('SDS');
+  sds.columns=[{width:6},{width:36},{width:8},{width:14},{width:10}];
+  const sdsTitles=[
+    'NEPAL ELECTRICITY AUTHORITY',
+    'Distribution and Consumer Services Directorate',
+    'Lumbini Provincial Office, Butwal',
+    'Taulihawa Distribution Center',
+    'FY: 2081/82',
+    'Works At: '+locations.join(', '),
+    'STRUCTURAL DATA SHEET (SDS)'
   ];
-  const sdsWs=XLSX.utils.aoa_to_sheet(sdsRows);
-  // Merge title rows across 5 cols (A:E)
-  sdsWs['!merges']=[];
-  for(let r=0;r<7;r++)sdsWs['!merges'].push({s:{r,c:0},e:{r,c:4}});
-  // Column widths matching reference exactly (subtract 0.875 padding xlsx adds)
-  sdsWs['!cols']=[{wch:6},{wch:36},{wch:8},{wch:14},{wch:10}];
-  // Row heights matching reference
-  sdsWs['!rows']=[{hpt:18.75},{},{},{},{},{},{},{hpt:16.5}];
+  sdsTitles.forEach((t,i)=>{sds.addRow([t,'','','','']);sds.mergeCells(i+1,1,i+1,5);});
+  sds.addRow(['','','','','']);                                  // row 8 gap
+  sds.addRow(['S.N.','Description of Item','Unit','Qty (Field)','Est. Qty']); // row 9 header
+  let sdsFieldTotal=0, sdsEstTotal=0;
+  usedComps.forEach((c,i)=>{const q=tot[c.id]||0,e=c.est||0;sdsFieldTotal+=q;sdsEstTotal+=e;sds.addRow([i+1,c.name,c.unit,q,e]);});
+  sds.addRow(['','TOTAL','',sdsFieldTotal,sdsEstTotal]);          // ← TOTAL row
+  sds.getRow(1).height=18.75; sds.getRow(8).height=16.5;
+  // Title block styling + medium outer border (rows1-7) and row8 closes the box
+  const sdsTitleStyle=(r,bold,size)=>{for(let c=1;c<=5;c++){const cell=sds.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===5?BM:undefined};}};
+  sdsTitleStyle(1,true,14);[2,3,4,5].forEach(r=>sdsTitleStyle(r,false,12));sdsTitleStyle(6,true,12);sdsTitleStyle(7,true,12);
+  for(let c=1;c<=5;c++){const cell=sds.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===5?BM:undefined};}
+  tableStyle(sds,9,sds.rowCount,1,5,[9]);
 
-  // Style title block A1:E7 — bold for row 1, 6, 7; regular for 2-5; MEDIUM outer border
-  const sdsTitleStyle=(R,bold,sz)=>{
-    for(let C=0;C<=4;C++){
-      const addr=XLSX.utils.encode_cell({r:R,c:C});
-      if(!sdsWs[addr])sdsWs[addr]={t:'s',v:''};
-      sdsWs[addr].s={
-        font:{name:'Calibri',sz:sz||12,bold:!!bold},
-        alignment:ALIGN_C,
-        border:{
-          top:R===0?BMED:undefined,
-          left:C===0?BMED:undefined,
-          right:C===4?BMED:undefined,
-          bottom:undefined
-        }
-      };
-    }
-  };
-  sdsTitleStyle(0,true,14);
-  sdsTitleStyle(1,false,12);
-  sdsTitleStyle(2,false,12);
-  sdsTitleStyle(3,false,12);
-  sdsTitleStyle(4,false,12);
-  sdsTitleStyle(5,true,12);
-  sdsTitleStyle(6,true,12);
-  // Row 8 (gap row index 7): closes the medium box with bottom border + left/right medium
-  for(let C=0;C<=4;C++){
-    const addr=XLSX.utils.encode_cell({r:7,c:C});
-    if(!sdsWs[addr])sdsWs[addr]={t:'s',v:''};
-    sdsWs[addr].s={
-      font:FONT12,alignment:ALIGN_C,
-      border:{
-        bottom:BMED,
-        left:C===0?BMED:undefined,
-        right:C===4?BMED:undefined
-      }
-    };
-  }
-  // Table area A9 (row idx 8) onwards: thin borders, center, bold header row only
-  styleRangeAsTable(sdsWs,8,sdsRows.length-1,0,4,{headerRows:[8]});
-  XLSX.utils.book_append_sheet(wb,sdsWs,'SDS');
-
-  // ════════════════════════════════════════
-  // SHEET 2 — Pole Schedule (core data)
-  // ════════════════════════════════════════
-  const schHdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...usedNames];
-  const schData=S.poles.map((p,i)=>[
-    i+1,
-    p.code,
-    p.location||'',
-    p.lat!=null?+p.lat.toFixed(6):'',
-    p.lng!=null?+p.lng.toFixed(6):'',
-    p.span||'',
-    i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',
-    p.remarks||'',
-    p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',
-    ...usedIds.map(id=>p.components?.[id]||0)
-  ]);
-  // Drop component columns where every pole has 0
-  const compColsToKeep=usedIds.map((id,ci)=>schData.some(row=>row[9+ci]>0)?ci:null).filter(ci=>ci!==null);
-  const filteredHdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...compColsToKeep.map(ci=>usedNames[ci])];
-  const filteredData=schData.map(row=>[...row.slice(0,9),...compColsToKeep.map(ci=>row[9+ci])]);
-  const schWs=XLSX.utils.aoa_to_sheet([filteredHdr,...filteredData]);
-  const schCols=[{wch:5},{wch:12},{wch:22},{wch:13},{wch:13},{wch:9},{wch:14},{wch:22},{wch:17},...compColsToKeep.map(()=>({wch:18}))];
-  schWs['!cols']=schCols;
-  styleRangeAsTable(schWs,0,filteredData.length,0,filteredHdr.length-1,{headerRows:[0]});
-  XLSX.utils.book_append_sheet(wb,schWs,'Pole Schedule');
-
-  // ════════════════════════════════════════
-  // SHEET 3 — BOM (Bill of Materials)
-  // ════════════════════════════════════════
-  const bomData=usedComps.map((c,i)=>{
-    const used=tot[c.id]||0,est=c.est||0,diff=used-est;
-    return[i+1,c.name,c.unit,est||'—',used,diff===0&&est>0?0:diff,used>est?'OVER':used<est&&est>0?'UNDER':used===est&&est>0?'EXACT':'—'];
+  // ════════════════ SHEET 2 — Pole Schedule (+ Photo column) ════════════════
+  const sch=wb.addWorksheet('Pole Schedule');
+  const compColsToKeep=usedIds.map((id,ci)=>S.poles.some(p=>(p.components?.[id]||0)>0)?ci:null).filter(ci=>ci!==null);
+  const compNames=compColsToKeep.map(ci=>usedNames[ci]);
+  const compIds=compColsToKeep.map(ci=>usedIds[ci]);
+  const hdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...compNames,'Photo'];
+  sch.addRow(hdr);
+  const PHOTO_COL=hdr.length;        // 1-based index of the Photo column
+  const spanColIdx=6;
+  let spanTotal=0; const compTotals=compIds.map(()=>0);
+  const photoRows=[];                // {rowNum, dataURL}
+  S.poles.forEach((p,i)=>{
+    if(p.span)spanTotal+=p.span;
+    const compVals=compIds.map((id,k)=>{const v=p.components?.[id]||0;compTotals[k]+=v;return v;});
+    const row=sch.addRow([
+      i+1,p.code,p.location||'',
+      p.lat!=null?+p.lat.toFixed(6):'',
+      p.lng!=null?+p.lng.toFixed(6):'',
+      p.span||'',
+      i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',
+      p.remarks||'',
+      p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',
+      ...compVals,''
+    ]);
+    if(p.photo)photoRows.push({rowNum:row.number,dataURL:p.photo,name:(p.code+'_'+(p.location||'')).replace(/[^A-Za-z0-9_\-]+/g,'_')});
   });
-  const totalUsed=usedComps.reduce((a,c)=>a+(tot[c.id]||0),0);
-  const totalEst=usedComps.reduce((a,c)=>a+(c.est||0),0);
-  // Layout: row1 title, row2 date, row3 gap, row4 headers, rows5..N data, gap row, TOTAL row
-  const bomFlat=[
-    ['BILL OF MATERIALS — '+proj,'','','','','',''],
-    ['Date: '+dateStr,'','','','','',''],
-    ['','','','','','',''],
-    ['SN','Component','Unit','Est. Qty','Field Qty','Difference','Status'],
-    ...bomData,
-    ['','','','','','',''],
-    ['','TOTAL','',totalEst,totalUsed,totalUsed-totalEst,'']
-  ];
-  const bomWs=XLSX.utils.aoa_to_sheet(bomFlat);
-  bomWs['!cols']=[{wch:7},{wch:36},{wch:8},{wch:10},{wch:10},{wch:12},{wch:10}];
-  bomWs['!merges']=[{s:{r:0,c:0},e:{r:0,c:6}},{s:{r:1,c:0},e:{r:1,c:6}}];
-  // Style all cells thin-bordered + centered (matches reference)
-  const bomLastRow=bomFlat.length-1;
-  for(let R=0;R<=bomLastRow;R++){
-    for(let C=0;C<=6;C++){
-      const addr=XLSX.utils.encode_cell({r:R,c:C});
-      if(!bomWs[addr])bomWs[addr]={t:'s',v:''};
-      const isHeaderRow=(R===0||R===3||R===bomLastRow);
-      bomWs[addr].s={
-        font:isHeaderRow?FONT12B:FONT12,
-        alignment:ALIGN_C,
-        border:{top:BTHIN,right:BTHIN,bottom:BTHIN,left:BTHIN}
-      };
-    }
-  }
-  XLSX.utils.book_append_sheet(wb,bomWs,'BOM');
+  // TOTAL row
+  const totalRow=['','TOTAL','','','',spanTotal||'','','','',...compTotals,''];
+  sch.addRow(totalRow);
+  sch.columns=[{width:5},{width:12},{width:22},{width:13},{width:13},{width:9},{width:14},{width:22},{width:17},...compNames.map(()=>({width:18})),{width:16}];
+  tableStyle(sch,1,sch.rowCount,1,hdr.length,[1, sch.rowCount]);
 
-  XLSX.writeFile(wb,'FieldGrid_'+proj.replace(/[^a-z0-9]/gi,'_')+'_'+dateStr+'.xlsx');
-  toast('⬇ Excel exported','#00a86b');
+  // Embed photos, named <code>_<location>, sized to fit the cell
+  const PH_W=86, PH_H=66, ROW_H=52;
+  photoRows.forEach(pr=>{
+    sch.getRow(pr.rowNum).height=ROW_H;
+    try{
+      const m=/^data:image\/(\w+);base64,(.*)$/.exec(pr.dataURL);
+      if(!m)return;
+      const id=wb.addImage({base64:m[2],extension:(m[1]==='png'?'png':'jpeg')});
+      sch.addImage(id,{tl:{col:PHOTO_COL-1+0.08,row:pr.rowNum-1+0.08},ext:{width:PH_W,height:PH_H},editAs:'oneCell',name:pr.name});
+      // Also drop the code_location name as a tooltip/comment-free fallback in an offscreen note:
+      // (the visible identifier remains the adjacent Pole Code + Location columns)
+    }catch(e){}
+  });
+
+  // ════════════════ SHEET 3 — BOM (already had TOTAL) ════════════════
+  const bom=wb.addWorksheet('BOM');
+  bom.columns=[{width:7},{width:36},{width:8},{width:10},{width:10},{width:12},{width:10}];
+  bom.addRow(['BILL OF MATERIALS — '+proj,'','','','','','']);bom.mergeCells(1,1,1,7);
+  bom.addRow(['Date: '+dateStr,'','','','','','']);bom.mergeCells(2,1,2,7);
+  bom.addRow(['','','','','','','']);
+  bom.addRow(['SN','Component','Unit','Est. Qty','Field Qty','Difference','Status']);
+  usedComps.forEach((c,i)=>{const used=tot[c.id]||0,est=c.est||0,diff=used-est;bom.addRow([i+1,c.name,c.unit,est||'—',used,(diff===0&&est>0)?0:diff,used>est?'OVER':(used<est&&est>0)?'UNDER':(used===est&&est>0)?'EXACT':'—']);});
+  bom.addRow(['','','','','','','']);
+  const bomTotUsed=usedComps.reduce((a,c)=>a+(tot[c.id]||0),0);
+  const bomTotEst=usedComps.reduce((a,c)=>a+(c.est||0),0);
+  bom.addRow(['','TOTAL','',bomTotEst,bomTotUsed,bomTotUsed-bomTotEst,'']);
+  const bomLast=bom.rowCount;
+  for(let r=1;r<=bomLast;r++)for(let c=1;c<=7;c++){
+    const cell=bom.getCell(r,c);
+    cell.font=(r===1||r===4||r===bomLast)?F12B:F12;
+    cell.alignment=CEN; cell.border=thinAll;
+  }
+
+  // ── Write & download ──
+  try{
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='FieldGrid_'+proj.replace(/[^a-z0-9]/gi,'_')+'_'+dateStr+'.xlsx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast('⬇ Excel exported','#00a86b');
+  }catch(e){toast('⚠ Export failed: '+e.message.slice(0,50));}
 }
 
 function downloadProjectBackup(){
@@ -2295,7 +2324,6 @@ function clearProject(){
   if(typeof gpxTrackLayer!=='undefined'&&gpxTrackLayer&&leafletMap){leafletMap.removeLayer(gpxTrackLayer);gpxTrackLayer=null;}
   // Clear record form
   const codeEl=document.getElementById('inp-code');if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
-  const spanEl=document.getElementById('inp-span');if(spanEl)spanEl.value='';
   const remEl=document.getElementById('inp-rem');if(remEl)remEl.value='';
   const locEl=document.getElementById('inp-loc');if(locEl)locEl.value='';
   setUpz('📂','Tap to upload SDS estimate file','Excel (.xlsx) · Row 6 = locations');
