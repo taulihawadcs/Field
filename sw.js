@@ -1,89 +1,2383 @@
-// FieldGrid Pro Service Worker — offline-first cache
-// Bumps version to invalidate old caches when assets change
-const CACHE_VERSION = 'fg-v6.5';
-const APP_CACHE   = CACHE_VERSION + '-app';
-const TILE_CACHE  = CACHE_VERSION + '-tiles';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,user-scalable=yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FieldGrid">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#154360">
+<title>FieldGrid Pro v7</title>
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+:root{
+  --primary:#154360;--primary-light:#1a5276;--primary-pale:#eaf2f8;--primary-dark:#0e2d40;
+  --bg:#f4f6f8;--card:#fff;--border:#d5dce4;--border-light:#e8edf2;
+  --text:#1a2332;--text2:#5a6a7a;--text3:#8a9aaa;
+  --danger:#c0392b;--danger-bg:#fde8e8;
+  --success:#1e8449;--success-bg:#eafaf1;
+  --warn:#b7950b;--warn-bg:#fef9e7;
+  --acc:#ffce00;--grn:#00a86b;--blue:#2e86de;
+  --radius:8px;--radius-sm:5px;
+  --shadow:0 1px 4px rgba(0,0,0,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;font-size:13px}
+body{display:flex;flex-direction:column;height:100dvh}
 
-// Core assets the Record page needs to function offline
-const CORE_ASSETS = [
-  './',
-  './FieldGrid_Pro_v6.html',
-  'https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&display=swap',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-  'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+/* ── HEADER ── */
+header{flex-shrink:0;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--primary);border-bottom:2px solid #0b1e2d;box-shadow:0 2px 8px rgba(21,67,96,.3)}
+.logo{display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:15px;white-space:nowrap}
+.logo-icon{width:34px;height:34px;background:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:16px}
+header select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;padding:6px 8px;border-radius:var(--radius-sm);flex:1;min-width:0;max-width:180px;-webkit-appearance:none}
+header select option{color:var(--text);background:#fff}
+#gps-pill{margin-left:auto;font-size:11px;padding:5px 11px;border-radius:99px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);white-space:nowrap;cursor:pointer;transition:all .2s}
+#gps-pill.live{color:#7fffcc;border-color:#7fffcc;animation:gpsPulse 2s infinite}
+#gps-pill.locked{color:#000;background:#00d4a4;border-color:#00d4a4;font-weight:700}
+@keyframes gpsPulse{0%,100%{box-shadow:0 0 0 0 rgba(0,212,164,.3)}50%{box-shadow:0 0 0 5px rgba(0,212,164,0)}}
+
+/* ── NAV ── */
+nav{flex-shrink:0;display:flex;background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{flex:1;min-width:60px;background:none;border:none;color:var(--text3);padding:9px 4px;font-size:10px;font-weight:600;cursor:pointer;border-bottom:2.5px solid transparent;white-space:nowrap;transition:all .15s;letter-spacing:.4px}
+nav button span{display:block;font-size:16px;margin-bottom:2px}
+nav button.on{color:var(--primary);border-bottom-color:var(--primary);background:var(--primary-pale)}
+nav button:hover:not(.on){color:var(--primary);background:var(--primary-pale)}
+
+/* ── MAIN ── */
+main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pg{display:none;padding:14px 14px 90px}
+.pg.on{display:block}
+.pg h2{font-size:18px;font-weight:700;color:var(--primary);margin-bottom:3px}
+.sub{font-size:11.5px;color:var(--text2);margin-bottom:14px;line-height:1.6}
+
+/* ── CARD ── */
+.card{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);padding:13px;margin-bottom:11px;box-shadow:var(--shadow)}
+.ct{font-size:11px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:7px;padding-bottom:9px;margin-bottom:11px;border-bottom:1px solid var(--border-light);text-transform:uppercase;letter-spacing:.5px}
+
+/* ── FORM ── */
+.lbl{font-size:10.5px;font-weight:600;color:var(--text2);letter-spacing:.4px;display:block;margin-bottom:5px;margin-top:12px;text-transform:uppercase}
+input,select,textarea{width:100%;background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;color:var(--text);font-size:13px;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(21,67,96,.1)}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--text3) 50%),linear-gradient(135deg,var(--text3) 50%,transparent 50%);background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px;background-repeat:no-repeat;padding-right:32px;-webkit-appearance:none}
+textarea{resize:vertical;min-height:60px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 15px;border-radius:var(--radius-sm);border:1px solid var(--border);cursor:pointer;font-size:12.5px;font-weight:600;transition:all .15s;-webkit-user-select:none;user-select:none}
+.btn:active{opacity:.8;transform:scale(.98)}
+.bp{background:var(--primary);border-color:var(--primary);color:#fff}.bp:hover{background:var(--primary-light)}
+.bg{background:var(--grn);border-color:var(--grn);color:#fff}
+.bo{background:#fff;color:var(--text)}.bo:hover{background:var(--bg)}
+.bd{color:var(--danger);border-color:#f5c6c2;background:#fff}.bd:hover{background:var(--danger-bg)}
+.bw{color:var(--warn);border-color:#f0d080;background:#fff}
+.full{width:100%}
+.sm{padding:6px 12px;font-size:11.5px}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+
+/* ── COMPONENT ROW ── */
+.er{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:7px 10px;margin-bottom:5px;display:flex;align-items:center;gap:7px}
+.er input{flex:1;border:none;padding:4px;font-size:13px;background:transparent;color:var(--text);min-width:0}
+.er input:focus{outline:none}
+.er .qty{flex:0 0 56px;text-align:center;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:12px}
+.er .unt{flex:0 0 48px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:11px;text-align:center}
+.er .x{background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px;flex-shrink:0;transition:color .1s}
+.er .x:hover{color:var(--danger)}
+
+/* ── COUNTER ── */
+.cc{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:9px 11px;margin-bottom:5px;display:flex;align-items:center;gap:10px;transition:border-color .2s,background .2s}
+.cc.hv{border-color:var(--primary);background:var(--primary-pale)}
+.cc .nm{flex:1;font-size:12.5px;line-height:1.3}
+.cc .nm .mt{font-size:10.5px;color:var(--text3);margin-top:2px}
+.cc .ctrl{display:flex;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px;gap:1px}
+.cc .ctrl button{width:34px;height:34px;border:none;background:none;color:var(--text2);font-size:18px;font-weight:700;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center;transition:background .1s}
+.cc .ctrl button:hover{background:var(--primary-pale);color:var(--primary)}
+.cc .vl{min-width:36px;text-align:center;font-size:16px;font-weight:700;color:var(--primary)}
+.tbadge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700}
+.tbadge.est{background:rgba(21,67,96,.1);color:var(--primary)}
+.tbadge.new{background:rgba(0,168,107,.12);color:var(--grn)}
+
+/* ── POLE ROW ── */
+.pr{background:var(--card);border:1px solid var(--border-light);border-left:3px solid var(--primary);border-radius:var(--radius-sm);padding:9px 11px;margin-bottom:5px;display:flex;align-items:flex-start;gap:9px}
+.pr.nc{border-left-color:var(--text3);border-left-style:dashed}
+.pr .cd{font-weight:700;font-size:13px;color:var(--primary);min-width:36px}
+.pr .inf{flex:1;font-size:11.5px;color:var(--text2);line-height:1.5}
+.pr .inf b{color:var(--text)}
+.pr .pra{display:flex;gap:4px;flex-shrink:0}
+.pr .dx{background:none;border:1px solid var(--border);color:var(--text3);cursor:pointer;font-size:14px;padding:3px 8px;border-radius:5px;transition:color .1s,border-color .1s}
+.pr .dx:hover{color:var(--danger);border-color:var(--danger)}
+.pr .ex{background:none;border:1px solid var(--primary);color:var(--primary);cursor:pointer;font-size:12px;padding:3px 8px;border-radius:5px;transition:background .1s}
+.pr .ex:hover{background:var(--primary-pale)}
+
+/* ── GPS BLOCK ── */
+.gblk{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:13px;margin-bottom:12px;transition:border-color .3s,box-shadow .3s}
+.gblk.lk{border-color:var(--grn);box-shadow:0 0 0 1px var(--grn),0 0 12px rgba(0,168,107,.12)}
+.gblk.ref{border-color:var(--primary)}
+.acc-display{display:flex;align-items:center;gap:11px;background:var(--bg);border-radius:6px;padding:9px 11px;margin:8px 0}
+.acc-big{font-size:22px;font-weight:700;min-width:64px;text-align:center;transition:color .3s}
+.acc-big.ex{color:var(--grn)}.acc-big.gd{color:var(--primary)}.acc-big.pr{color:var(--danger)}
+.acc-meta{flex:1;font-size:11px;color:var(--text2);line-height:1.5}
+.acc-meta b{color:var(--text);font-size:12px}
+.gco{font-size:13px;font-weight:600;color:var(--primary);margin:5px 0}
+.gco.em{color:var(--text3);font-size:12px;font-weight:400}
+.gbar{height:5px;background:var(--border);border-radius:3px;margin-top:7px;overflow:hidden;position:relative}
+.gbf{height:100%;background:var(--grn);width:0;transition:width .5s,background .4s;border-radius:3px}
+.gbf.w{background:var(--primary)}.gbf.b{background:var(--danger)}
+.gps-stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:9px}
+.gps-stat{background:var(--bg);border-radius:5px;padding:6px 8px;text-align:center;border:1px solid var(--border-light)}
+.gps-stat .v{font-size:14px;font-weight:700;color:var(--primary)}
+.gps-stat .l{font-size:9px;color:var(--text3);margin-top:2px;text-transform:uppercase;letter-spacing:.4px}
+
+/* ── EDIT POLE PANEL ── */
+.edit-panel{background:var(--primary-pale);border:1.5px solid var(--primary);border-radius:var(--radius);padding:13px;margin-bottom:12px;display:none}
+.edit-panel.show{display:block}
+.edit-panel .et{font-size:12px;font-weight:700;color:var(--primary);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+
+/* ── MAP ── */
+#pole-map{width:100%;height:82vh;min-height:560px;border-radius:var(--radius);border:1px solid var(--border);z-index:0;position:relative;touch-action:none}
+.leaflet-container{touch-action:none!important}
+@media (max-width:600px){#pole-map{height:80vh;min-height:520px}}
+.map-wrap{position:relative;margin-bottom:10px}
+.map-overlay{position:absolute;top:8px;left:8px;z-index:400;display:flex;flex-direction:column;gap:5px;pointer-events:none}
+.map-badge{background:rgba(255,255,255,.94);border:1px solid var(--border);border-radius:5px;padding:4px 9px;font-size:10px;color:var(--text2);pointer-events:auto;box-shadow:var(--shadow)}
+.map-badge b{color:var(--primary)}
+/* Leaflet overrides */
+.leaflet-popup-content-wrapper{background:#fff!important;border:1px solid var(--border)!important;color:var(--text)!important;border-radius:8px!important;font-family:'Segoe UI',sans-serif!important;font-size:12px!important;box-shadow:0 4px 16px rgba(0,0,0,.12)!important}
+.leaflet-popup-tip{background:#fff!important}
+.pole-popup-code{font-weight:700;color:var(--primary);font-size:14px;margin-bottom:3px}
+.pole-popup-row{font-size:11px;color:var(--text2);line-height:1.6}
+.pole-popup-comp{display:inline-block;background:var(--primary-pale);color:var(--primary);border-radius:3px;padding:1px 5px;margin:1px;font-size:10px;font-weight:600}
+/* ── Map text labels: text-only, click-through (so pinch-zoom & pan always work) ── */
+.fg-lbl-wrap{background:transparent!important;border:0!important;pointer-events:none!important}
+.fg-lbl-wrap *{pointer-events:none!important}
+.fg-map-lbl{color:#000;font-size:10px;font-weight:700;white-space:nowrap;line-height:1.1;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,1px 1px 1px #fff,-1px -1px 1px #fff,1px -1px 1px #fff,-1px 1px 1px #fff}
+.fg-map-lbl.fg-pole-code{color:#154360;font-size:11px}
+.fg-map-lbl.fg-map-span{color:#1a1a1a;font-size:9.5px}
+/* Permanent name labels via L.tooltip — strip default tooltip styling, guarantee no event capture */
+.leaflet-tooltip.fg-perm-lbl{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;font:inherit!important;color:inherit!important;pointer-events:none!important;white-space:nowrap!important}
+.leaflet-tooltip.fg-perm-lbl::before{display:none!important}
+.tile-btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.tile-btns span{font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+
+/* ── SLD ── */
+#sld-canvas-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:auto;-webkit-overflow-scrolling:touch;margin-bottom:10px}
+.sld-ctrl{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.sld-ctrl select{flex:1;min-width:80px;padding:8px 10px;font-size:12px}
+
+/* ── STATS GRID ── */
+.sg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px}
+.st{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);padding:13px;box-shadow:var(--shadow)}
+.st .n{font-size:26px;font-weight:700;color:var(--primary);line-height:1}
+.st .l{font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:.8px}
+
+/* ── TABLE ── */
+table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--border-light)}
+th{background:var(--primary-pale);color:var(--primary);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+td b{color:var(--primary)}
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700}
+.ok{background:rgba(0,168,107,.12);color:var(--grn)}
+.ov{background:var(--danger-bg);color:var(--danger)}
+.un{background:var(--warn-bg);color:var(--warn)}
+.empty{padding:28px 14px;text-align:center;color:var(--text3);font-size:12px}
+
+/* ── UPLOAD ZONE ── */
+.upz{background:var(--card);border:2px dashed var(--border);border-radius:var(--radius);padding:24px 16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.upz:hover{border-color:var(--primary);background:var(--primary-pale)}
+.upz .ico{font-size:32px;margin-bottom:7px}
+.upz .ttl{font-weight:700;font-size:14px;margin-bottom:3px}
+.upz .dsc{font-size:11px;color:var(--text2);line-height:1.5}
+
+/* ── PROJECT CARD ── */
+.pjc{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);padding:11px 13px;display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:5px;transition:border-color .15s,background .15s}
+.pjc.cur{border-color:var(--primary);background:var(--primary-pale)}
+.pjc .pn{flex:1;font-weight:600;font-size:13px}
+.pjc .pm{font-size:10.5px;color:var(--text3);margin-top:2px}
+
+/* ── STATUS BAR ── */
+.sbar{display:none;padding:8px 12px;font-size:12px;border-radius:var(--radius-sm);margin-bottom:10px;border:1px solid;font-weight:500}
+.sbar.ok{background:var(--success-bg);border-color:#a9dfbf;color:var(--success)}
+.sbar.err{background:var(--danger-bg);border-color:#f5c6c2;color:var(--danger)}
+.sbar.sh{display:block}
+
+/* ── CABLE PROMPT ── */
+.cp{background:var(--warn-bg);border:1px solid #f0d080;border-radius:var(--radius);padding:12px;margin-bottom:12px;display:none}
+.cp.sh{display:block}
+.cp .ct2{font-weight:700;font-size:12.5px;color:var(--warn);margin-bottom:5px}
+.cp .yn{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+
+/* ── MODAL ── */
+.moverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(2px);animation:fadeIn .18s ease}
+.moverlay.hidden{display:none}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.mbox{background:var(--card);border:1.5px solid var(--primary);border-radius:12px;padding:22px;max-width:380px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.18)}
+.mbox h2{font-size:17px;font-weight:700;color:var(--primary);margin-bottom:8px}
+.mbox p{font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--primary);color:#fff;padding:9px 18px;border-radius:99px;font-weight:600;font-size:12px;opacity:0;transition:opacity .2s,transform .2s;z-index:900;pointer-events:none;max-width:88vw;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+#toast.sh{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── AUTH GATE ── */
+#auth-gate{position:fixed;inset:0;background:var(--primary-dark);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px}
+.auth-box{max-width:360px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:26px 22px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.auth-logo{font-size:20px;font-weight:700;color:var(--primary);margin-bottom:3px}
+.auth-sub{font-size:11px;color:var(--text2);margin-bottom:20px}
+
+/* ── NO-GPS HINT ── */
+#no-gps-poles{display:none;background:var(--warn-bg);border:1px solid #f0d080;border-radius:8px;padding:10px;font-size:11px;color:var(--warn);margin-bottom:10px}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- AUTH GATE -->
+<div id="auth-gate">
+  <div class="auth-box">
+    <div class="auth-logo"><i class="fa fa-bolt"></i> FieldGrid Pro</div>
+    <div class="auth-sub">Field survey workspace · NEA Distribution</div>
+    <label class="lbl" style="margin-top:0">PASSWORD</label>
+    <input id="auth-pw" type="password" placeholder="Enter password" style="margin-bottom:10px">
+    <button class="btn bp full" id="auth-go">Unlock →</button>
+    <div id="auth-err" style="display:none;margin-top:8px;padding:7px 10px;background:var(--danger-bg);border:1px solid #f5c6c2;border-radius:5px;color:var(--danger);font-size:11px"></div>
+  </div>
+</div>
+
+<header>
+  <div class="logo"><div class="logo-icon"><i class="fa fa-bolt"></i></div>FieldGrid</div>
+  <select id="proj-sel" onchange="switchProject(this.value)"></select>
+</header>
+
+<nav id="main-nav">
+  <button class="on" data-pg="setup"><span><i class="fa fa-cog"></i></span>SETUP</button>
+  <button data-pg="record"><span><i class="fa fa-map-pin"></i></span>RECORD</button>
+  <button data-pg="sld"><span><i class="fa fa-map"></i></span>MAP</button>
+  <button data-pg="report"><span><i class="fa fa-table"></i></span>REPORT</button>
+</nav>
+
+<main id="main-content">
+
+<!-- ══ PAGE 1: SETUP ══ -->
+<section class="pg on" id="pg-setup">
+  <h2>Setup</h2>
+  <p class="sub">Configure project · upload SDS estimate · manage components and locations</p>
+
+  <div class="card">
+    <div class="ct"><i class="fa fa-folder"></i> Projects
+      <button class="btn bo sm" style="margin-left:auto" onclick="toggleNewProj()"><i class="fa fa-plus"></i> New</button>
+    </div>
+    <div id="new-proj-form" style="display:none;flex-direction:column;gap:7px;background:var(--primary-pale);border:1px solid var(--primary);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
+      <div style="font-weight:700;font-size:12px;color:var(--primary)">New Project</div>
+      <input id="new-proj-name" placeholder="e.g. Rampur LT Extension 2025">
+      <div style="display:flex;gap:7px">
+        <button class="btn bp sm" style="flex:1" onclick="createProject()">Create</button>
+        <button class="btn bo sm" onclick="toggleNewProj()">Cancel</button>
+      </div>
+    </div>
+    <div id="pj-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="ct"><i class="fa fa-upload"></i> Import Estimate (SDS Excel)</div>
+    <div class="upz" id="upz" onclick="document.getElementById('fin').click()">
+      <div class="ico" id="upz-ico">📂</div>
+      <div class="ttl" id="upz-ttl">Tap to upload SDS estimate file</div>
+      <div class="dsc" id="upz-dsc">Excel (.xlsx) · Row 6 = Works At [locations] · Description column = components</div>
+    </div>
+    <input type="file" id="fin" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleUpload(this)">
+    <div class="sbar" id="parse-st"></div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn bo sm" onclick="importFromExcel()"><i class="fa fa-file-excel"></i> Re-import from Excel</button>
+      <button class="btn bo sm" onclick="restoreProjectBackup()"><i class="fa fa-rotate-left"></i> Restore backup (.json)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ct"><i class="fa fa-box"></i> Components
+      <span id="cc-cnt" style="background:var(--primary);color:#fff;font-size:10px;padding:1px 7px;border-radius:99px;margin-left:4px">0</span>
+      <button class="btn bo sm" style="margin-left:auto" onclick="addComp()"><i class="fa fa-plus"></i> Add</button>
+    </div>
+    <div id="comp-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="ct"><i class="fa fa-map-marker-alt"></i> Locations
+      <span id="lc-cnt" style="background:var(--primary);color:#fff;font-size:10px;padding:1px 7px;border-radius:99px;margin-left:4px">0</span>
+      <button class="btn bo sm" style="margin-left:auto" onclick="addLoc()"><i class="fa fa-plus"></i> Add</button>
+    </div>
+    <div id="loc-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="ct"><i class="fa fa-key"></i> Access</div>
+    <p style="font-size:11.5px;color:var(--text2);margin-bottom:10px">Password-protected. Session unlocks last until browser tab closes.</p>
+    <button class="btn bd sm" onclick="resetPassword()"><i class="fa fa-key"></i> Reset Password</button>
+  </div>
+
+  <button class="btn bp full" style="margin-top:4px" onclick="goPage('record')">Continue to Record →</button>
+</section>
+
+<!-- ══ PAGE 2: RECORD ══ -->
+<section class="pg" id="pg-record">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <h2 style="margin:0">Record Pole</h2>
+  </div>
+  <p class="sub" id="rec-proj" style="color:var(--primary);margin-bottom:8px"></p>
+
+  <!-- Cable prompt -->
+  <div class="cp" id="cable-prompt">
+    <div class="ct2"><i class="fa fa-plug"></i> Connect cable from previous pole?</div>
+    <div style="font-size:11.5px;color:var(--text2)" id="cp-info"></div>
+    <div class="yn">
+      <button class="btn bg sm" onclick="setCable(true)"><i class="fa fa-check"></i> Yes, connected</button>
+      <button class="btn bo sm" onclick="setCable(false)"><i class="fa fa-unlink"></i> No, standalone</button>
+    </div>
+  </div>
+
+  <!-- Pole fields -->
+  <div class="g2" style="margin-bottom:10px">
+    <div>
+      <label class="lbl" style="margin-top:0">Pole Code
+        <span id="pole-code-suggest" style="font-size:9px;color:var(--text3);font-weight:400;text-transform:none;margin-left:6px"></span>
+      </label>
+      <input id="inp-code" placeholder="e.g. wpt001" style="font-weight:700;font-size:14px;color:var(--primary);border-color:var(--primary)" autocomplete="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div>
+      <label class="lbl" style="margin-top:0">Span (m)</label>
+      <input id="inp-span" placeholder="e.g. 45" type="number" step="0.1" inputmode="decimal" oninput="this.dataset.userTyped='1'">
+      <div id="inp-span-hint" style="font-size:10px;color:var(--text3);margin-top:3px;min-height:13px"></div>
+    </div>
+  </div>
+
+  <label class="lbl">Location / Area</label>
+  <select id="inp-loc" onchange="onLocationChange()"><option value="">— select location —</option></select>
+
+  <label class="lbl">Remarks</label>
+  <textarea id="inp-rem" placeholder="Notes, issues, observations…"></textarea>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:7px">
+    <label class="lbl" style="margin:0">Components at this pole</label>
+    <button class="btn bo sm" onclick="resetCtrs()">↻ Reset</button>
+  </div>
+  <div id="ctr-list"></div>
+
+  <button class="btn bg full" style="margin-top:13px;padding:14px;font-size:14px" onclick="savePole()"><i class="fa fa-save"></i> Save Pole</button>
+
+  <!-- Edit pole panel -->
+  <div class="edit-panel" id="edit-panel">
+    <div class="et">
+      <span id="edit-panel-title">Edit Pole</span>
+      <button class="btn bd sm" onclick="cancelEdit()">✕ Cancel</button>
+    </div>
+    <div id="edit-panel-body"></div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn bp" onclick="saveEdit()"><i class="fa fa-save"></i> Save Changes</button>
+      <button class="btn bo sm" onclick="cancelEdit()">Cancel</button>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px;margin-bottom:9px">
+    <span style="font-weight:700;font-size:13px">Recorded Poles</span>
+    <span id="pole-cnt" style="background:var(--primary);color:#fff;font-size:10px;padding:2px 8px;border-radius:99px">0</span>
+  </div>
+  <div id="pole-list"></div>
+</section>
+
+<!-- ══ PAGE 3: MAP ══ -->
+<section class="pg" id="pg-sld">
+  <h2>Map</h2>
+  <p class="sub">Real terrain map · scroll / pinch to zoom · imported GPX track &amp; waypoints</p>
+
+  <!-- GPX Import -->
+  <div class="card">
+    <div class="ct"><i class="fa fa-satellite-dish" style="color:var(--blue)"></i> GPX Track Import
+      <span id="gpx-file-count" style="margin-left:6px;background:var(--blue);color:#fff;font-size:9px;padding:1px 7px;border-radius:99px;display:none">0 files</span>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      <label class="btn bo sm" style="cursor:pointer">
+        <i class="fa fa-file-import"></i> Import GPX (multi)
+        <input type="file" id="gpx-file-input" accept=".gpx,.xml,text/xml,application/gpx+xml" multiple onchange="importGPXFiles(this.files)" style="display:none">
+      </label>
+      <button class="btn bo sm" id="gpx-show-btn" onclick="toggleGpxTrack()" style="display:none"><i class="fa fa-eye-slash"></i> Hide tracks</button>
+      <button class="btn bg sm" id="gpx-sync-btn" onclick="syncAllFromGPX()" style="display:none"><i class="fa fa-link"></i> Sync poles from GPX</button>
+      <button class="btn bo sm" id="snap-all-btn" onclick="snapAllPoles()" style="display:none"><i class="fa fa-crosshairs"></i> Snap poles</button>
+      <button class="btn bd sm" id="gpx-clear-btn" onclick="clearGPX()" style="display:none">✕ Clear all</button>
+    </div>
+    <div id="gpx-status" style="font-size:10.5px;color:var(--text3);line-height:1.6">
+      No GPX imported. You can import <b>multiple</b> GPX files at once. Each file becomes a separate track.
+    </div>
+    <div id="gpx-file-list" style="display:none;margin-top:7px"></div>
+    <div id="gpx-legend" style="display:none;margin-top:8px;padding:7px 10px;background:var(--bg);border:1px solid var(--border-light);border-radius:6px;font-size:10px;line-height:2">
+      <b style="color:var(--primary)">Map Key:</b>
+      <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px">
+        <svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="#111" stroke="#fff" stroke-width="1.5"/></svg> Track point (black)
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px">
+        <svg width="14" height="14"><circle cx="7" cy="7" r="6" fill="#154360" stroke="#fff" stroke-width="1.5"/></svg> New pole (solid)
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px">
+        <svg width="14" height="14"><circle cx="7" cy="7" r="6" fill="#ddd" stroke="#888" stroke-width="2" stroke-dasharray="3,2"/></svg> Existing pole (dashed)
+      </span>
+    </div>
+  </div>
+
+  <!-- THE MAP — zooming and panning enabled -->
+  <div class="map-wrap" id="map-wrap">
+    <div id="pole-map"></div>
+    <div class="map-overlay">
+      <div class="map-badge" id="map-stats-badge">—</div>
+    </div>
+  </div>
+
+  <!-- Tile layer switcher -->
+  <div class="tile-btns">
+    <span>MAP</span>
+    <button class="btn bp sm" id="tile-osm-btn" onclick="switchTile('osm')"><i class="fa fa-globe"></i> Street</button>
+    <button class="btn bo sm" id="tile-sat-btn" onclick="switchTile('sat')"><i class="fa fa-satellite"></i> Satellite</button>
+    <button class="btn bo sm" id="tile-topo-btn" onclick="switchTile('topo')"><i class="fa fa-mountain"></i> Topo</button>
+    <button class="btn bo sm" id="tile-hybrid-btn" onclick="switchTile('hybrid')"><i class="fa fa-layer-group"></i> Hybrid</button>
+    <button class="btn bp sm" id="map-fit-btn" onclick="fitMapToPoles()"><i class="fa fa-expand-arrows-alt"></i> Fit All</button>
+  </div>
+
+  <div id="no-gps-poles"></div>
+
+  <div class="btn-row">
+    <button class="btn bp" id="map-pdf-btn" onclick="downloadMapPDF()" style="flex:1"><i class="fa fa-file-pdf"></i> Download Map as PDF</button>
+  </div>
+</section>
+
+<!-- ══ PAGE 4: REPORT ══ -->
+<section class="pg" id="pg-report">
+  <h2>Report</h2>
+  <p class="sub">Bill of materials · estimated vs field-recorded · suitable for SDS input</p>
+  <div class="sg">
+    <div class="st"><div class="n" id="r-poles">0</div><div class="l">Poles</div></div>
+    <div class="st"><div class="n" id="r-span">0m</div><div class="l">Total span</div></div>
+    <div class="st"><div class="n" id="r-comps">0</div><div class="l">Components used</div></div>
+    <div class="st"><div class="n" id="r-areas">0</div><div class="l">Areas</div></div>
+  </div>
+  <div style="font-weight:700;font-size:13px;margin-bottom:9px;color:var(--primary)">Bill of Materials</div>
+  <div id="bom-tbl" style="overflow-x:auto"></div>
+  <div style="font-weight:700;font-size:13px;margin-bottom:9px;margin-top:6px;color:var(--primary)">Pole Schedule</div>
+  <div id="sched-tbl" style="overflow-x:auto"></div>
+  <div class="btn-row">
+    <button class="btn bp" onclick="expXLSX()"><i class="fa fa-file-excel"></i> Export Excel (SDS-ready)</button>
+  </div>
+  <div class="btn-row" style="margin-top:10px">
+    <button class="btn bd" id="clear-proj-btn" onclick="clearProject()" style="flex:1"><i class="fa fa-trash"></i> Clear all project data</button>
+  </div>
+  <p class="sub" style="text-align:center;margin-top:6px;color:var(--text3);font-size:11px">You'll be asked to export a backup first, so the project can be reopened later.</p>
+</section>
+
+</main>
+
+<!-- MODALS -->
+<div class="moverlay hidden" id="proj-modal">
+  <div class="mbox">
+    <h2><i class="fa fa-bolt"></i> Start a Project</h2>
+    <p>Name your project before recording poles.</p>
+    <label class="lbl" style="margin-top:0">Project Name</label>
+    <input id="modal-proj-name" placeholder="e.g. Rampur LT Extension 2082" style="margin-bottom:12px">
+    <button class="btn bp full" onclick="createProjectFromModal()">Create &amp; Start →</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════
+// CONSTANTS & DEFAULTS
+// ═══════════════════════════════════════════
+const DEF_COMPS = [
+  {id:'pole',name:'Pole',unit:'nos',cat:'structure',est:0},
+  {id:'cable_25_2c',name:'ABC 25mm² 2-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'cable_50_2c',name:'ABC 50mm² 2-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'cable_50_4c',name:'ABC 50mm² 4-core Cable',unit:'m',cat:'cable',est:0},
+  {id:'i_bolt',name:'I-Bolt',unit:'nos',cat:'hardware',est:0},
+  {id:'susp_clamp',name:'Suspension Clamp',unit:'nos',cat:'fitting',est:0},
+  {id:'anchor_clamp',name:'Anchor Clamp (Dead-end)',unit:'nos',cat:'fitting',est:0},
+  {id:'d_iron',name:'D-Iron with Shackle Insulator',unit:'nos',cat:'hardware',est:0},
+  {id:'lt_stay',name:'LT Stay Set',unit:'set',cat:'structure',est:0},
+  {id:'stay_wire',name:'Stay Wire',unit:'m',cat:'structure',est:0},
+  {id:'connector_ipc',name:'Connector (IPC)',unit:'nos',cat:'fitting',est:0},
+  {id:'pg_clamp',name:'PG Clamp',unit:'nos',cat:'fitting',est:0},
+  {id:'earth_rod',name:'Earthing Rod / Pipe',unit:'nos',cat:'safety',est:0},
+  {id:'pin_insul',name:'Pin Insulator',unit:'nos',cat:'insulator',est:0},
+  {id:'disc_insul',name:'Disc Insulator',unit:'nos',cat:'insulator',est:0},
+  {id:'cross_arm',name:'Cross-arm',unit:'nos',cat:'structure',est:0},
+  {id:'fuse_cutout',name:'Fuse Cutout (DO Fuse)',unit:'nos',cat:'protection',est:0},
+  {id:'lightning_arr',name:'Lightning Arrester',unit:'nos',cat:'protection',est:0},
+  {id:'conductor',name:'Conductor Wire',unit:'m',cat:'cable',est:0},
+  {id:'nut_bolt',name:'Nut Bolt',unit:'kg',cat:'hardware',est:0},
+  {id:'pole_clamp',name:'Pole Clamp',unit:'nos',cat:'hardware',est:0},
+  {id:'t_channel',name:'T-Channel',unit:'nos',cat:'structure',est:0},
 ];
+const NEW_COL='#00a86b', EST_COL='#154360', GPS_TARGET_ACC=8, GPS_GOOD_ACC=15, GPS_MIN_READS=3, GPS_PRECISION_READS=20, GPS_DROP_WORST_PCT=0.30;
 
-// ── INSTALL: pre-cache core assets ───────────────────────────────
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(APP_CACHE)
-      .then(cache => cache.addAll(CORE_ASSETS.map(u => new Request(u, {mode:'no-cors'}))))
-      .then(() => self.skipWaiting())
-      .catch(err => console.warn('[SW] Pre-cache partial fail:', err))
-  );
-});
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+const lsGet=(k,d)=>{try{const v=localStorage.getItem(k);return v!=null?JSON.parse(v):d;}catch(e){return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const genId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+const today=()=>new Date().toISOString().slice(0,10);
+const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-// ── ACTIVATE: clean up old cache versions ────────────────────────
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => !k.startsWith(CACHE_VERSION)).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
+function toast(msg,col){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.background=col||'var(--primary)'; t.style.color='#fff';
+  t.classList.add('sh'); clearTimeout(t._t);
+  t._t=setTimeout(()=>t.classList.remove('sh'),2800);
+}
 
-// ── FETCH: stale-while-revalidate for app, cache-first for tiles ──
-self.addEventListener('fetch', event => {
-  const req = event.request;
-  if (req.method !== 'GET') return;
+// ═══════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════
+const AUTH_HASH='fg_auth_hash', AUTH_SESS='fg_unlocked';
+async function sha256(t){const b=new TextEncoder().encode(t),h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+async function authCheck(){
+  if(sessionStorage.getItem(AUTH_SESS)==='1'){document.getElementById('auth-gate').style.display='none';return;}
+  const stored=localStorage.getItem(AUTH_HASH);
+  const gate=document.getElementById('auth-gate'), inp=document.getElementById('auth-pw'), btn=document.getElementById('auth-go'), err=document.getElementById('auth-err');
+  if(!stored){inp.placeholder='Create a password (min 4 chars)';btn.textContent='SET PASSWORD →';err.style.display='block';err.style.color='var(--success)';err.textContent='First-time setup — choose a password.';}
+  const attempt=async()=>{
+    const pw=inp.value.trim();
+    if(pw.length<4){err.style.display='block';err.style.color='var(--danger)';err.textContent='Password must be at least 4 characters.';return;}
+    const hash=await sha256(pw);
+    if(!stored){localStorage.setItem(AUTH_HASH,hash);sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
+    else if(hash===stored){sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
+    else{err.style.display='block';err.style.color='var(--danger)';err.textContent='Wrong password.';inp.value='';inp.focus();}
+  };
+  btn.addEventListener('click',attempt);
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')attempt();});
+  setTimeout(()=>inp.focus(),100);
+}
+async function resetPassword(){
+  if(!confirm('Reset password? Survey data will NOT be affected.'))return;
+  localStorage.removeItem(AUTH_HASH);sessionStorage.removeItem(AUTH_SESS);
+  alert('Password reset. Reload the page to set a new one.');
+}
 
-  const url = new URL(req.url);
-  const isTile = /tile\.openstreetmap|arcgisonline|opentopomap/.test(url.hostname);
-  const isAPI  = /api\.groq\.com|googleapis\.com\/v1beta/.test(url.hostname);
+// ═══════════════════════════════════════════
+// PROJECTS
+// ═══════════════════════════════════════════
+let CUR='';
+const pk=k=>`fg_p_${CUR}_${k}`;
+const pGet=(k,d)=>lsGet(pk(k),d);
+const pSet=(k,v)=>lsSet(pk(k),v);
+const getProjs=()=>lsGet('fg_projects',[]);
+const saveProjs=ls=>lsSet('fg_projects',ls);
 
-  // Skip caching for AI API calls (always need fresh)
-  if (isAPI) return;
+function initProjects(){
+  const projs=getProjs();
+  if(!projs.length){document.getElementById('proj-modal').classList.remove('hidden');setTimeout(()=>document.getElementById('modal-proj-name').focus(),100);return;}
+  CUR=lsGet('fg_cur',projs[0].id);
+  if(!projs.find(p=>p.id===CUR))CUR=projs[0].id;
+  lsSet('fg_cur',CUR);renderProjSel();renderProjList();
+}
+function createProjectFromModal(){
+  const name=(document.getElementById('modal-proj-name').value||'').trim();
+  if(!name){toast('⚠ Enter a project name');return;}
+  const p={id:genId(),name,created:today()};
+  const ls=getProjs();ls.push(p);saveProjs(ls);
+  CUR=p.id;lsSet('fg_cur',CUR);
+  document.getElementById('proj-modal').classList.add('hidden');
+  loadState();renderAll();renderProjSel();renderProjList();
+  toast('✅ Project "'+name+'" created');
+}
+function renderProjSel(){
+  document.getElementById('proj-sel').innerHTML=getProjs().map(p=>`<option value="${esc(p.id)}"${p.id===CUR?' selected':''}>${esc(p.name)}</option>`).join('');
+}
+function renderProjList(){
+  const projs=getProjs();
+  document.getElementById('pj-list').innerHTML=projs.map(p=>{
+    const poles=lsGet(`fg_p_${p.id}_poles`,[]).length;
+    return `<div class="pjc${p.id===CUR?' cur':''}" onclick="switchProject('${p.id}')">
+      <div style="flex:1"><div class="pn">${esc(p.name)}</div><div class="pm">${poles} poles · ${p.created||'—'}</div></div>
+      <button class="btn bo sm" onclick="event.stopPropagation();renameProj('${p.id}')"><i class="fa fa-pen"></i></button>
+      ${projs.length>1?`<button class="btn bd sm" onclick="event.stopPropagation();deleteProj('${p.id}')">×</button>`:''}
+    </div>`;
+  }).join('');
+}
+function switchProject(id){CUR=id;lsSet('fg_cur',id);loadState();renderAll();renderProjSel();renderProjList();toast('→ '+(getProjs().find(p=>p.id===id)?.name||id));}
+function toggleNewProj(){const f=document.getElementById('new-proj-form');const s=f.style.display==='flex';f.style.display=s?'none':'flex';if(!s){const i=document.getElementById('new-proj-name');i.value='Project '+(getProjs().length+1);i.focus();i.select();}}
+function createProject(){const name=(document.getElementById('new-proj-name').value||'').trim();if(!name){toast('⚠ Enter name');return;}const p={id:genId(),name,created:today()};const ls=getProjs();ls.push(p);saveProjs(ls);document.getElementById('new-proj-form').style.display='none';switchProject(p.id);toast('✅ "'+name+'" created');}
+function renameProj(id){const p=getProjs().find(x=>x.id===id);const n=prompt('Rename:',p?.name||'');if(!n||!n.trim())return;saveProjs(getProjs().map(x=>x.id===id?Object.assign({},x,{name:n.trim()}):x));if(id===CUR)renderProjSel();renderProjList();toast('✅ Renamed');}
+function deleteProj(id){const p=getProjs().find(x=>x.id===id);if(!confirm('Delete "'+( p?.name||id)+'" and all data?'))return;try{Object.keys(localStorage).filter(k=>k.startsWith('fg_p_'+id+'_')).forEach(k=>localStorage.removeItem(k));}catch(e){}const ls=getProjs().filter(x=>x.id!==id);saveProjs(ls);if(CUR===id&&ls.length)switchProject(ls[0].id);else renderProjList();}
 
-  if (isTile) {
-    // Map tiles: cache-first with background update
-    event.respondWith(
-      caches.open(TILE_CACHE).then(cache =>
-        cache.match(req).then(cached => {
-          const fetchPromise = fetch(req).then(resp => {
-            if (resp && resp.status === 200) cache.put(req, resp.clone());
-            return resp;
-          }).catch(() => cached);
-          return cached || fetchPromise;
-        })
-      )
-    );
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+const S={poles:[],components:[],locations:[],counters:{},gps:null,gpsLocked:false,cableConnect:null};
+function loadState(){
+  S.poles=pGet('poles',[]);
+  S.components=pGet('components',JSON.parse(JSON.stringify(DEF_COMPS)));
+  S.locations=pGet('locations',[]);
+  S.counters={};S.components.forEach(c=>S.counters[c.id]=0);
+  S.gpsLocked=false;S.cableConnect=null;
+  gpxTrack=pGet('gpxTrack',null);
+  setTimeout(()=>{
+    const show=document.getElementById('gpx-show-btn'),snap=document.getElementById('snap-all-btn'),clr=document.getElementById('gpx-clear-btn'),st=document.getElementById('gpx-status');
+    if(gpxTrack&&gpxTrack.length){[show,snap,clr].forEach(b=>{if(b)b.style.display='';});if(st)st.innerHTML='✅ <b>'+gpxTrack.length+'</b> trackpoints loaded · <b>'+(computeTrackLength(gpxTrack)/1000).toFixed(2)+'km</b>';}
+    else{[show,snap,clr].forEach(b=>{if(b)b.style.display='none';});if(st)st.textContent='No GPX imported.';}
+  },50);
+}
+
+// ═══════════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════════
+document.getElementById('main-nav').addEventListener('click',e=>{const b=e.target.closest('button[data-pg]');if(b)goPage(b.dataset.pg);});
+function goPage(pg){
+  document.querySelectorAll('.pg').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.pg===pg));
+  const t=document.getElementById('pg-'+pg);if(t){t.classList.add('on');document.getElementById('main-content').scrollTo({top:0,behavior:'smooth'});}
+  if(pg==='record'){renderCtrs();renderPoleList();syncLocDrop();showCablePrompt();}
+  if(pg==='sld'){if(!mapInitialised)initMap();else{leafletMap.invalidateSize();refreshMap();}}
+  if(pg==='report')renderReport();
+}
+
+// ═══════════════════════════════════════════
+// GPS — HIGH PRECISION
+// ═══════════════════════════════════════════
+let gpsWatchId=null,gpsManualMode=false,gpsSession=null;
+function computeFilteredFix(samples){
+  if(!samples||samples.length<5)return null;
+  const sorted=[...samples].sort((a,b)=>a.acc-b.acc);
+  const keepN=Math.max(3,Math.floor(sorted.length*(1-GPS_DROP_WORST_PCT)));
+  const kept=sorted.slice(0,keepN);
+  const lats=kept.map(r=>r.lat).sort((a,b)=>a-b),lngs=kept.map(r=>r.lng).sort((a,b)=>a-b);
+  const mid=Math.floor(kept.length/2);
+  const medLat=kept.length%2?lats[mid]:(lats[mid-1]+lats[mid])/2;
+  const medLng=kept.length%2?lngs[mid]:(lngs[mid-1]+lngs[mid])/2;
+  const meanAcc=kept.reduce((a,r)=>a+r.acc,0)/kept.length;
+  return{lat:medLat,lng:medLng,acc:Math.max(1,meanAcc),samples:kept.length,raw:samples.length};
+}
+function startHighPrecisionGPS(){
+  if(gpsSession&&gpsSession.running){stopHighPrecisionGPS('cancelled');return;}
+  if(!navigator.geolocation){showGPSStatus('⚠ Geolocation not supported','warn');return;}
+  gpsSession={startMs:Date.now(),readings:[],best:null,running:true};
+  S.gpsLocked=false;
+  document.getElementById('gblk').classList.remove('lk');document.getElementById('gblk').classList.add('ref');
+  const btn=document.getElementById('gps-req-btn');btn.innerHTML='<i class="fa fa-stop"></i> Stop (refining…)';
+  updateGPSPill('live','Acquiring…');updateAccDisplay(null,'acquiring…');
+  gpsWatchId=navigator.geolocation.watchPosition(onGPSReading,onGPSError,{enableHighAccuracy:true,timeout:30000,maximumAge:0});
+  if(gpsSession._ticker)clearInterval(gpsSession._ticker);
+  gpsSession._ticker=setInterval(()=>{
+    if(!gpsSession||!gpsSession.running)return;
+    const sec=Math.floor((Date.now()-gpsSession.startMs)/1000);
+    document.getElementById('gs-elapsed').textContent=sec+'s';
+    if(sec===90&&(!gpsSession.best||gpsSession.best.acc>GPS_TARGET_ACC)){showGPSStatus('⏱ 90s without ≤8m fix. Best: ±'+(gpsSession.best?gpsSession.best.acc.toFixed(1):'-')+'m. Move to open sky or use Manual.','warn');showLockAtBestBtn();}
+  },1000);
+}
+function onGPSReading(pos){
+  if(!gpsSession||!gpsSession.running)return;
+  const r={lat:pos.coords.latitude,lng:pos.coords.longitude,acc:pos.coords.accuracy,ts:Date.now()};
+  gpsSession.readings.push(r);
+  if(!gpsSession.best||r.acc<gpsSession.best.acc)gpsSession.best=r;
+  document.getElementById('gs-readings').textContent=gpsSession.readings.length;
+  document.getElementById('gs-best').textContent=gpsSession.best.acc.toFixed(1);
+  updateAccDisplay(r.acc,'live');updateAccBar(r.acc);
+  const recent=gpsSession.readings.slice(-5);
+  const avgLat=recent.reduce((a,x)=>a+x.lat,0)/recent.length,avgLng=recent.reduce((a,x)=>a+x.lng,0)/recent.length;
+  document.getElementById('gco').className='gco';document.getElementById('gco').textContent=avgLat.toFixed(6)+', '+avgLng.toFixed(6);
+  updateGPSPill('live','±'+r.acc.toFixed(0)+'m');
+  updateLiveSpan(r);
+  if(r.acc<=GPS_TARGET_ACC&&gpsSession.readings.length>=GPS_MIN_READS)autoLockGPS();
+}
+function onGPSError(err){
+  let msg='⚠ GPS error: ';
+  if(err.code===1)msg+='Permission denied. Enable location in Settings.';
+  else if(err.code===2)msg+='Position unavailable. Move outdoors.';
+  else if(err.code===3)msg+='Timeout. Move to open sky or use Manual entry.';
+  else msg+=err.message;
+  showGPSStatus(msg,'warn');
+}
+function autoLockGPS(filteredFix){
+  if(!gpsSession||(!gpsSession.best&&!filteredFix))return;
+  const fix=filteredFix||gpsSession.best;
+  S.gps={lat:fix.lat,lng:fix.lng,acc:fix.acc,manual:false,samples:gpsSession.readings.length};
+  S.gpsLocked=true;stopHighPrecisionGPS('locked');
+  document.getElementById('gblk').classList.add('lk');document.getElementById('gblk').classList.remove('ref');
+  showGPSFix('🔒 Auto-locked ±'+fix.acc.toFixed(1)+'m',false);
+  updateGPSPill('locked','🔒 '+fix.acc.toFixed(1)+'m');
+  showGPSStatus('✅ Locked at ±'+fix.acc.toFixed(1)+'m','ok');
+  toast('🔒 GPS ±'+fix.acc.toFixed(1)+'m','#00a86b');
+  if(navigator.vibrate)navigator.vibrate([60,40,60]);
+}
+function manualLockAtBest(){
+  if(!gpsSession||!gpsSession.readings.length){toast('⚠ No readings yet');return;}
+  let fix=null;
+  if(gpsSession.readings.length>=5)fix=computeFilteredFix(gpsSession.readings);
+  if(!fix)fix=gpsSession.best;
+  if(!fix){toast('⚠ No usable readings');return;}
+  S.gps={lat:fix.lat,lng:fix.lng,acc:fix.acc,manual:false,samples:gpsSession.readings.length};
+  S.gpsLocked=true;stopHighPrecisionGPS('manual-lock');
+  document.getElementById('gblk').classList.add('lk');document.getElementById('gblk').classList.remove('ref');
+  showGPSFix('Locked at best ±'+fix.acc.toFixed(1)+'m',false);
+  updateGPSPill('locked','🔒 '+fix.acc.toFixed(1)+'m');
+  toast('🔒 Locked ±'+fix.acc.toFixed(1)+'m','#00a86b');
+}
+function stopHighPrecisionGPS(reason){
+  if(gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;}
+  if(gpsSession&&gpsSession._ticker){clearInterval(gpsSession._ticker);gpsSession._ticker=null;}
+  if(gpsSession)gpsSession.running=false;
+  const btn=document.getElementById('gps-req-btn');
+  btn.innerHTML=S.gpsLocked?'<i class="fa fa-redo"></i> Re-acquire':'<i class="fa fa-play"></i> Start Auto-Lock';
+  hideLockAtBestBtn();
+}
+function showLockAtBestBtn(){
+  if(document.getElementById('gps-lockbest-btn'))return;
+  const btn=document.createElement('button');btn.id='gps-lockbest-btn';btn.className='btn bp full';btn.style.marginTop='7px';
+  btn.textContent='✓ Lock at Best ('+(gpsSession.best.acc.toFixed(1))+'m)';
+  btn.addEventListener('click',manualLockAtBest);document.getElementById('gps-auto-section').appendChild(btn);
+}
+function hideLockAtBestBtn(){const b=document.getElementById('gps-lockbest-btn');if(b)b.remove();}
+function updateGPSPill(state,txt){const p=document.getElementById('gps-pill');p.className=state||'';p.textContent=txt||'GPS off';}
+function updateAccDisplay(acc,label){
+  const big=document.getElementById('acc-big'),status=document.getElementById('acc-status'),sub=document.getElementById('acc-sub');
+  if(acc==null){big.textContent='—';big.className='acc-big';if(label)status.textContent=label;return;}
+  big.textContent='±'+acc.toFixed(1)+'m';
+  big.className='acc-big'+(acc<=GPS_TARGET_ACC?' ex':acc<=GPS_GOOD_ACC?' gd':' pr');
+  if(label==='live'){status.textContent=acc<=GPS_TARGET_ACC?'Excellent':'Refining…';sub.textContent='Auto-lock at ≤8m.';}
+}
+function updateAccBar(acc){
+  const bar=document.getElementById('gbf');if(!bar)return;
+  const pct=Math.max(5,Math.min(100,100-acc*1.5));bar.style.width=pct+'%';
+  bar.className='gbf'+(acc<=GPS_TARGET_ACC?'':acc<=GPS_GOOD_ACC?' w':' b');
+}
+function toggleManualGPS(){
+  gpsManualMode=!gpsManualMode;
+  document.getElementById('gps-manual-section').style.display=gpsManualMode?'block':'none';
+  document.getElementById('gps-auto-section').style.display=gpsManualMode?'none':'block';
+  const btn=document.getElementById('gps-manual-toggle-btn');if(btn)btn.textContent=gpsManualMode?'× Hide':'✎ Manual';
+}
+function setManualGPS(){
+  const lat=parseFloat(document.getElementById('inp-lat').value),lng=parseFloat(document.getElementById('inp-lng').value);
+  if(isNaN(lat)||isNaN(lng)){toast('⚠ Enter valid lat/lng');return;}
+  S.gps={lat,lng,acc:10,manual:true};S.gpsLocked=true;
+  document.getElementById('gblk').classList.add('lk');
+  showGPSFix('Manual entry ±10m',true);updateGPSPill('locked','🔒 manual');toast('✓ Coordinates set','#00a86b');
+}
+function showGPSFix(accLabel,isManual){
+  if(!S.gps)return;
+  document.getElementById('gps-fix-display').style.display='block';
+  document.getElementById('gps-fix-coords').textContent=S.gps.lat.toFixed(6)+', '+S.gps.lng.toFixed(6);
+  document.getElementById('gps-fix-acc').textContent=accLabel+(isManual?' ✎':' 📍');
+}
+function showGPSStatus(msg,type){
+  const box=document.getElementById('gps-status-box');if(!box)return;
+  if(!msg){box.style.display='none';return;}
+  box.style.display='block';
+  const cols={warn:'var(--danger)',ok:'var(--grn)',info:'var(--text2)'};
+  const bgs={warn:'var(--danger-bg)',ok:'var(--success-bg)',info:'var(--bg)'};
+  box.style.background=bgs[type]||bgs.info;box.style.border='1px solid '+(type==='warn'?'#f5c6c2':type==='ok'?'#a9dfbf':'var(--border)');
+  box.style.color=cols[type]||cols.info;box.style.whiteSpace='pre-wrap';box.textContent=msg;
+}
+function updateLiveSpan(reading){
+  const spanInput=document.getElementById('inp-span'),spanHint=document.getElementById('inp-span-hint');
+  if(!spanInput||!spanHint)return;
+  if(!S.poles||!S.poles.length){spanHint.textContent='First pole';spanHint.style.color='var(--text3)';return;}
+  const last=S.poles[S.poles.length-1];
+  if(!last.lat||!last.lng){spanHint.textContent='Previous pole has no GPS';spanHint.style.color='var(--warn)';return;}
+  const ref=reading||(gpsSession&&gpsSession.best)||null;
+  if(!ref){spanHint.textContent='Waiting for GPS…';return;}
+  const dist=haversine(last.lat,last.lng,ref.lat,ref.lng);
+  if(!spanInput.dataset.userTyped)spanInput.value=dist.toFixed(1);
+  spanHint.textContent='📐 Live: '+dist.toFixed(1)+'m from '+last.code+' (±'+(ref.acc||0).toFixed(0)+'m)';
+  spanHint.style.color='var(--success)';
+}
+
+// ═══════════════════════════════════════════
+// FILE UPLOAD & PARSE
+// ═══════════════════════════════════════════
+function handleUpload(inp){
+  const file=inp.files[0];if(!file)return;
+  const ext=file.name.toLowerCase().split('.').pop();
+  setUpz('⏳','Reading…',file.name);
+  const rd=new FileReader();
+  rd.onload=e=>{try{if(ext==='xlsx'||ext==='xls')applyData(parseXLSX(e.target.result),file.name,'Built-in');else applyData(parseCSV(e.target.result),file.name,'CSV');}catch(err){toast('⚠ '+err.message);setUpz('📂','Tap to upload','Try again');}};
+  if(ext==='xlsx'||ext==='xls')rd.readAsArrayBuffer(file);else rd.readAsText(file);
+  inp.value='';
+}
+function parseXLSX(buf){
+  const wb=XLSX.read(buf,{type:'array'});
+  const sn=wb.SheetNames.find(n=>/^sds$|sds[\s_-]|survey.?design/i.test(n))||wb.SheetNames[0];
+  return parseSDS(wb.Sheets[sn],sn);
+}
+function parseSDS(ws,sheetName){
+  const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+  const rows=raw.map(r=>r.map(x=>String(x||'').trim()));
+  const res={components:[],locations:[],sheet:sheetName};
+  if(rows.length>=6){
+    const row6=rows[5].join(' ');
+    const wa=row6.match(/works?\s*at\s*[:-]?\s*(.+)/i);
+    if(wa){wa[1].split(',').map(l=>l.trim()).filter(l=>l.length>1&&!/^\d+$/.test(l)).forEach(l=>{if(!res.locations.includes(l))res.locations.push(l);});}
+    else{rows[5].forEach(cell=>{if(cell.length>2&&!/^\d/.test(cell)&&!/works|date|ref|project|prepared|page|no.?$/i.test(cell)){cell.split(',').map(l=>l.trim()).filter(l=>l.length>1&&!/^\d+$/.test(l)).forEach(l=>{if(!res.locations.includes(l))res.locations.push(l);});}});}
+  }
+  let descRow=-1,colName=0,colQty=1,colUnit=2;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i],j=r.join(' ').toLowerCase();
+    if(/description|item|particulars|material|component|name/.test(j)&&/qty|quantity|nos|unit|amount|number/.test(j)){
+      colName=r.findIndex(c=>/description|item|particulars|material|component|name/i.test(c));
+      // Prefer "Est." / "Estimate" / "Estimated" column for the estimate; fall back to any qty column
+      colQty=r.findIndex(c=>/est(\.|\s|imated|imate)?\s*qty|estimate(d)?(\s+qty)?$/i.test(c));
+      if(colQty<0)colQty=r.findIndex(c=>/qty|quantity|nos|amount|number/i.test(c));
+      colUnit=r.findIndex(c=>/unit/i.test(c));
+      if(colName<0)colName=0;if(colQty<0)colQty=colName+1;if(colUnit<0)colUnit=colQty+1;
+      descRow=i+1;break;
+    }
+  }
+  if(descRow<0)descRow=0;
+  for(let i=descRow;i<rows.length;i++){
+    const r=rows[i];
+    if(r.every(c=>!c))break;
+    let name=r[colName]||'',qtyRaw=r[colQty]||'',unit=r[colUnit]||'nos';
+    if(/^\d{1,4}$/.test(name.trim())){name=r[colName+1]||'';qtyRaw=r[colQty+1]||r[colQty]||'';unit=r[colUnit+1]||r[colUnit]||'nos';}
+    name=name.trim();unit=String(unit).trim().slice(0,12)||'nos';
+    const qty=parseFloat(String(qtyRaw).replace(/[^0-9.]/g,''));
+    if(!name||name.length<2)continue;
+    if(/^(s.?no|sn\b|sl.?no?|#|description|item|name|material|particulars|qty|quantity|unit|total|grand|sub.?total|amount|remarks|note)/i.test(name))continue;
+    const id='imp_'+name.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40);
+    if(res.components.find(c=>c.id===id))continue;
+    res.components.push({id,name,unit,cat:'imported',est:isNaN(qty)?0:qty});
+  }
+  return res;
+}
+function parseCSV(text){
+  const res={components:[],locations:[]};let mode='comp';
+  for(const line of text.split(/\r?\n/).map(l=>l.trim())){
+    if(!line)continue;
+    if(/^#?\s*comp/i.test(line)){mode='comp';continue;}
+    if(/^#?\s*(loc|area|villag)/i.test(line)){mode='loc';continue;}
+    const p=line.split(/[,;\t|]/).map(x=>x.trim());
+    if(mode==='comp'&&p[0]&&p[0].length>1){const qty=parseFloat(p[1]);const id='csv_'+p[0].toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40);res.components.push({id,name:p[0],unit:p[2]||'nos',cat:'csv',est:isNaN(qty)?0:qty});}
+    else if(mode==='loc'&&p[0])res.locations.push(p[0]);
+  }
+  return res;
+}
+function applyData(data,filename,source){
+  const msgs=[];
+  if(data.components&&data.components.length>0){
+    // Always clear existing components before import
+    S.components=[];
+    S.counters={};
+    S.components=data.components;
+    S.components.forEach(c=>{S.counters[c.id]=0;});
+    pSet('components',S.components);
+    msgs.push(data.components.length+' components');
+  }
+  else{const st=document.getElementById('parse-st');st.classList.add('sh');st.className='sbar err sh';st.innerHTML='⚠ No components found. Defaults kept.';if(data.locations?.length){S.locations=[...new Set(data.locations.map(l=>l.trim()).filter(l=>l.length>1))];pSet('locations',S.locations);toast('✅ '+S.locations.length+' locations loaded');}renderComps();renderLocs();return;}
+  S.locations=data.locations?.length?[...new Set(data.locations.map(l=>l.trim()).filter(l=>l.length>1))]:[];
+  pSet('locations',S.locations);msgs.push(S.locations.length+' locations');
+  setUpz('✅',filename,msgs.join(' · '));
+  const st=document.getElementById('parse-st');st.className='sbar ok sh';st.innerHTML='✓ <b>'+esc(source)+'</b>: '+msgs.join(', ')+' — <b>previous components cleared</b>';
+  toast('✅ '+msgs.join(' & ')+' (old cleared)');renderComps();renderLocs();
+}
+function setUpz(ico,ttl,dsc){document.getElementById('upz-ico').textContent=ico;document.getElementById('upz-ttl').textContent=ttl;document.getElementById('upz-dsc').textContent=dsc;}
+
+// ═══════════════════════════════════════════
+// RE-IMPORT FROM PREVIOUSLY EXPORTED EXCEL
+// ═══════════════════════════════════════════
+function importFromExcel(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls';
+  inp.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'array'});
+        let comps=[],locs=[];
+
+        // ── Components: ONLY from BOM sheet ──
+        const bomSN=wb.SheetNames.find(n=>/^bom$|bill.?of.?mat/i.test(n));
+        if(!bomSN){
+          toast('⚠ No BOM sheet found. File must contain a "BOM" sheet.','#e74c3c');
+          const st=document.getElementById('parse-st');
+          st.className='sbar err sh';
+          st.innerHTML='⚠ BOM sheet not found. Export from FieldGrid first, then re-import.';
+          return;
+        }
+        const bws=wb.Sheets[bomSN];
+        const braw=XLSX.utils.sheet_to_json(bws,{header:1,defval:''});
+        braw.forEach((row,i)=>{
+          if(i===0)return; // skip header
+          const name=String(row[0]||'').trim();
+          const unit=String(row[1]||'nos').trim();
+          const est=parseFloat(row[2]);  // Estimated Qty is col 2
+          if(name&&name.length>2&&!/^(component|name|description|sn|#|item)/i.test(name)){
+            const id='imp_'+name.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40);
+            if(!comps.find(c=>c.id===id))
+              comps.push({id,name,unit:unit||'nos',cat:'imported',est:isNaN(est)?0:est});
+          }
+        });
+
+        // ── Locations: from Pole Schedule sheet (as before) ──
+        const sched=wb.SheetNames.find(n=>/pole.?schedule|schedule/i.test(n));
+        if(sched){
+          const sws=wb.Sheets[sched];
+          const sraw=XLSX.utils.sheet_to_json(sws,{header:1,defval:''});
+          sraw.forEach((row,i)=>{
+            if(i===0)return;
+            const loc=String(row[2]||'').trim();
+            if(loc&&loc.length>1&&!locs.includes(loc))locs.push(loc);
+          });
+        }
+
+        if(!comps.length&&!locs.length){
+          toast('⚠ Nothing usable found in BOM sheet');return;
+        }
+        applyData({components:comps,locations:locs},file.name,'BOM Re-import');
+      }catch(err){toast('⚠ '+err.message);}
+    };
+    rd.readAsArrayBuffer(file);
+  };
+  inp.click();
+}
+
+// ═══════════════════════════════════════════
+// COMPONENTS & LOCATIONS
+// ═══════════════════════════════════════════
+function renderComps(){
+  document.getElementById('cc-cnt').textContent=S.components.length;
+  document.getElementById('comp-list').innerHTML=S.components.map((c,i)=>
+    `<div class="er">
+      <input value="${esc(c.name)}" oninput="S.components[${i}].name=this.value;pSet('components',S.components)" placeholder="Name">
+      <input class="qty" type="number" value="${c.est||''}" oninput="S.components[${i}].est=parseFloat(this.value)||0;pSet('components',S.components)" placeholder="Est" inputmode="decimal">
+      <input class="unt" value="${esc(c.unit)}" oninput="S.components[${i}].unit=this.value;pSet('components',S.components)" placeholder="unit">
+      <button class="x" onclick="S.components.splice(${i},1);pSet('components',S.components);renderComps()">×</button>
+    </div>`
+  ).join('')||'<div class="empty">No components — upload estimate file or add manually</div>';
+}
+function addComp(){S.components.push({id:'c_'+genId(),name:'New component',unit:'nos',cat:'custom',est:0});pSet('components',S.components);renderComps();}
+function renderLocs(){
+  document.getElementById('lc-cnt').textContent=S.locations.length;
+  document.getElementById('loc-list').innerHTML=S.locations.map((l,i)=>
+    `<div class="er"><input value="${esc(l)}" oninput="S.locations[${i}]=this.value;pSet('locations',S.locations)" placeholder="Area / village"><button class="x" onclick="S.locations.splice(${i},1);pSet('locations',S.locations);renderLocs()">×</button></div>`
+  ).join('')||'<div class="empty">No locations — upload estimate file or add manually</div>';
+}
+function addLoc(){S.locations.push('New location');pSet('locations',S.locations);renderLocs();}
+function syncLocDrop(){const sel=document.getElementById('inp-loc'),cur=sel.value;sel.innerHTML='<option value="">— select location —</option>'+S.locations.map(l=>`<option value="${esc(l)}"${l===cur?' selected':''}>${esc(l)}</option>`).join('');}
+
+function onLocationChange(){
+  // When the surveyor switches location, re-suggest the per-location code and refresh
+  // the (compulsory) cable-connection prompt for that location's run.
+  const codeEl=document.getElementById('inp-code');
+  if(codeEl){codeEl.dataset.autoFilled='1';codeEl.value='';}
+  updatePoleCodeDisplay();
+  showCablePrompt();
+}function updatePoleCodeDisplay(){
+  const el=document.getElementById('inp-code');
+  const sug=document.getElementById('pole-code-suggest');
+  if(!el)return;
+  const suggested=nextPoleCode();
+  // Only set value if field is empty or was previously auto-filled
+  if(!el.value||el.dataset.autoFilled==='1'){
+    el.value=suggested;
+    el.dataset.autoFilled='1';
+  }
+  if(sug) sug.textContent=S.poles.length?'suggested: '+suggested:'first pole';
+}
+function showCablePrompt(){
+  const cp=document.getElementById('cable-prompt');
+  const sel=document.getElementById('inp-loc');
+  const loc=sel?sel.value:'';
+  // Find the previous pole in the SAME location (cable connects within a location's run).
+  const inLoc=loc?S.poles.filter(p=>(p.location||'')===loc):S.poles;
+  if(!inLoc.length){
+    // First pole in this location → it's the source, no cable-from-previous question.
+    cp.classList.remove('sh');S.cableConnect=null;return;
+  }
+  const last=inLoc[inLoc.length-1];
+  document.getElementById('cp-info').innerHTML=`Connecting from previous pole <b>${esc(last.code)}</b> in <b>${esc(loc||'—')}</b>. This choice is required.`;
+  cp.classList.add('sh');S.cableConnect=null;
+}
+function setCable(v){S.cableConnect=v;document.getElementById('cable-prompt').classList.remove('sh');toast(v?'🔌 Cable connected':'⏭ Standalone');}
+
+// ═══════════════════════════════════════════
+// COUNTERS
+// ═══════════════════════════════════════════
+function renderCtrs(){
+  document.getElementById('rec-proj').textContent=getProjs().find(p=>p.id===CUR)?.name||'';
+  updatePoleCodeDisplay();
+  document.getElementById('ctr-list').innerHTML=S.components.map(c=>{
+    const v=S.counters[c.id]||0,isEst=c.est>0;
+    return `<div class="cc${v>0?' hv':''}" id="cc-${c.id}">
+      <div class="nm">${esc(c.name)}<span class="tbadge ${isEst?'est':'new'}">${isEst?'EST:'+c.est:'NEW'}</span><div class="mt">${esc(c.unit)}</div></div>
+      <div class="ctrl">
+        <button onclick="bump('${c.id}',-1)">−</button>
+        <div class="vl" id="cv-${c.id}">${v}</div>
+        <button onclick="bump('${c.id}',1)">＋</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function bump(id,d){
+  S.counters[id]=Math.max(0,(S.counters[id]||0)+d);
+  const v=S.counters[id];
+  const ve=document.getElementById('cv-'+id),re=document.getElementById('cc-'+id);
+  if(ve)ve.textContent=v;if(re)re.className='cc'+(v>0?' hv':'');
+}
+function resetCtrs(){S.counters={};S.components.forEach(c=>S.counters[c.id]=0);renderCtrs();}
+function resetRecordSession(){
+  if(!confirm('Clear current form and counters? Saved poles NOT affected.'))return;
+  const codeEl=document.getElementById('inp-code');
+  if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
+  document.getElementById('inp-span').value='';document.getElementById('inp-rem').value='';
+  document.getElementById('inp-loc').value='';
+  S.counters={};S.components.forEach(c=>S.counters[c.id]=0);
+  S.cableConnect=null;
+  document.getElementById('cable-prompt').classList.remove('sh');
+  cancelEdit();renderCtrs();updatePoleCodeDisplay();toast('↺ Session cleared');
+}
+
+// ═══════════════════════════════════════════
+// SAVE POLE
+// ═══════════════════════════════════════════
+function nextPoleCode(){
+  // Suggestion is PER-LOCATION: each location keeps its own running series, so when you
+  // restart surveying at a new location the count begins again (and a new location starts
+  // at wpt001). Code uniqueness is enforced within a location, not globally.
+  const sel=document.getElementById('inp-loc');
+  const loc=sel?sel.value:'';
+  // Poles already recorded in the currently selected location, in entry order.
+  const inLoc=loc?S.poles.filter(p=>(p.location||'')===loc):S.poles;
+  if(!inLoc.length){
+    // New/empty location: mirror the numbering style of the most recent pole if any,
+    // otherwise default to wpt001.
+    if(S.poles.length){
+      const anyLast=S.poles[S.poles.length-1].code||'wpt001';
+      const m0=anyLast.match(/^(.*?)(\d+)$/);
+      if(m0)return m0[1]+'1'.padStart(m0[2].length,'0');
+    }
+    return 'wpt001';
+  }
+  const last=inLoc[inLoc.length-1].code||'';
+  const m=last.match(/^(.*?)(\d+)$/);
+  if(!m) return last+'_2';
+  const prefix=m[1], num=m[2];
+  const next=String(parseInt(num,10)+1).padStart(num.length,'0');
+  return prefix+next;
+}
+function savePole(){
+  const loc=document.getElementById('inp-loc').value;
+  if(!loc){toast('⚠ Select location first');return;}
+  const codeEl=document.getElementById('inp-code');
+  const code=(codeEl?.value||'').trim();
+  if(!code){toast('⚠ Enter pole code');return;}
+  // Duplicate code is checked WITHIN the same location only — the same code may legitimately
+  // repeat in a different location (surveys restart numbering per location).
+  if(S.poles.find(p=>p.code===code && (p.location||'')===loc)){toast('⚠ Code "'+code+'" already used in '+loc);return;}
+  // Cable connection is COMPULSORY for every pole after the first one in a location.
+  const isFirstInLoc=!S.poles.some(p=>(p.location||'')===loc);
+  if(!isFirstInLoc && S.cableConnect===null){
+    toast('⚠ Choose cable connection (Yes / Standalone) first');
+    const cp=document.getElementById('cable-prompt');if(cp){cp.classList.add('sh');cp.scrollIntoView({behavior:'smooth',block:'center'});}
     return;
   }
+  let span=parseFloat(document.getElementById('inp-span').value)||null;
+  const pole={
+    id:genId(),code,location:loc,span,
+    lat:null,lng:null,acc:null,samples:null,
+    poleType:'',
+    remarks:document.getElementById('inp-rem').value.trim(),
+    components:Object.assign({},S.counters),
+    connectedToPrev:isFirstInLoc?null:(S.cableConnect===true),
+    recordedAt:new Date().toISOString()
+  };
+  S.poles.push(pole);pSet('poles',S.poles);
+  toast('✅ Saved '+code);
+  if(navigator.vibrate)navigator.vibrate(40);
+  const spanEl=document.getElementById('inp-span');spanEl.value='';delete spanEl.dataset.userTyped;
+  document.getElementById('inp-rem').value='';
+  // Mark code field for auto-refill
+  if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
+  updatePoleCodeDisplay();resetCtrs();renderPoleList();showCablePrompt();
+}
 
-  // App assets: stale-while-revalidate
-  event.respondWith(
-    caches.open(APP_CACHE).then(cache =>
-      cache.match(req).then(cached => {
-        const fetchPromise = fetch(req).then(resp => {
-          if (resp && (resp.status === 200 || resp.type === 'opaque')) {
-            cache.put(req, resp.clone()).catch(() => {});
-          }
-          return resp;
-        }).catch(() => cached);
-        return cached || fetchPromise;
-      })
-    )
-  );
-});
+// ═══════════════════════════════════════════
+// EDIT POLE (edit components & remarks, NOT location)
+// ═══════════════════════════════════════════
+let editingPoleId=null;
+function startEditPole(id){
+  const pole=S.poles.find(p=>p.id===id);if(!pole)return;
+  editingPoleId=id;
+  const panel=document.getElementById('edit-panel');
+  document.getElementById('edit-panel-title').textContent='Edit '+pole.code+' — Components & Remarks (location locked)';
+  // Build edit form: show component counters + remarks
+  let html=`<div style="font-size:11px;color:var(--primary);background:var(--primary-pale);border-radius:5px;padding:7px 10px;margin-bottom:10px"><i class="fa fa-info-circle"></i> GPS location is preserved. You can edit components and remarks only.</div>`;
+  html+=`<label class="lbl" style="margin-top:0">Remarks</label><textarea id="ep-rem" rows="2">${esc(pole.remarks||'')}</textarea>`;
+  html+=`<label class="lbl">Pole Type</label><select id="ep-type">`;
+  ['psc','wooden','gi','rcc','existing','corner','terminal','tee'].forEach(t=>{html+=`<option value="${t}"${pole.poleType===t?' selected':''}>${t==='psc'?'PSC (New)':t.charAt(0).toUpperCase()+t.slice(1)}</option>`;});
+  html+='</select>';
+  html+=`<label class="lbl">Components</label>`;
+  S.components.forEach(c=>{const v=pole.components?.[c.id]||0;html+=`<div class="cc${v>0?' hv':''}" style="margin-bottom:4px"><div class="nm">${esc(c.name)}<div class="mt">${esc(c.unit)}</div></div><div class="ctrl"><button onclick="epBump('${c.id}',-1)">−</button><div class="vl" id="ep-cv-${c.id}">${v}</div><button onclick="epBump('${c.id}',1)">＋</button></div></div>`;});
+  panel.querySelector('#edit-panel-body').innerHTML=html;
+  // Store current values for editing
+  window._editComps=Object.assign({},pole.components||{});
+  panel.classList.add('show');
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function epBump(id,d){
+  window._editComps[id]=Math.max(0,(window._editComps[id]||0)+d);
+  const v=window._editComps[id];
+  const ve=document.getElementById('ep-cv-'+id);if(ve)ve.textContent=v;
+  const re=document.querySelector(`#edit-panel-body .cc`+id);// update class
+  document.querySelectorAll('#edit-panel-body .cc').forEach(el=>{const cid=el.querySelector('[id^="ep-cv-"]')?.id?.replace('ep-cv-','');if(cid===id)el.className='cc'+(v>0?' hv':'');});
+}
+function saveEdit(){
+  if(!editingPoleId)return;
+  const pole=S.poles.find(p=>p.id===editingPoleId);if(!pole)return;
+  pole.remarks=document.getElementById('ep-rem')?.value?.trim()||'';
+  pole.poleType=document.getElementById('ep-type')?.value||pole.poleType;
+  pole.components=Object.assign({},window._editComps||{});
+  pSet('poles',S.poles);toast('✅ '+pole.code+' updated');
+  cancelEdit();renderPoleList();
+}
+function cancelEdit(){editingPoleId=null;document.getElementById('edit-panel').classList.remove('show');window._editComps={};}
 
-// ── MESSAGE: allow manual cache purge from app ───────────────────
-self.addEventListener('message', event => {
-  if (event.data === 'CLEAR_CACHE') {
-    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+// ═══════════════════════════════════════════
+// POLE LIST
+// ═══════════════════════════════════════════
+function renderPoleList(){
+  document.getElementById('pole-cnt').textContent=S.poles.length;
+  document.getElementById('pole-list').innerHTML=[...S.poles].reverse().map(p=>{
+    const gpsLine=p.lat
+      ?'📍'+p.lat.toFixed(5)+', '+p.lng.toFixed(5)+(p.acc?' ±'+p.acc.toFixed(0)+'m':'')+(p.pinnedManually?' 📌':'')
+      :'<span style="color:var(--danger)">⚠ No GPS — pin on Map page</span>';
+    const compsLine=Object.entries(p.components||{}).filter(e=>e[1]>0).map(e=>{const n=S.components.find(c=>c.id===e[0])?.name||e[0];return `<span style="background:var(--primary-pale);color:var(--primary);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600">${esc(n)} ×${e[1]}</span>`;}).join(' ');
+    return `<div class="pr${p.connectedToPrev===false?' nc':''}">
+      <div class="cd">${esc(p.code)}</div>
+      <div class="inf">
+        <b>${esc(p.location||'—')}</b>${p.span?' · '+p.span+'m':''}<br>
+        ${gpsLine}
+        ${compsLine?'<br>'+compsLine:''}
+        ${p.remarks?'<br><span style="color:var(--text3);font-size:10px">'+esc(p.remarks)+'</span>':''}
+      </div>
+      <div class="pra">
+        <button class="ex" onclick="startEditPole('${p.id}')"><i class="fa fa-pen"></i></button>
+        <button class="dx" onclick="delPole('${p.id}')">×</button>
+      </div>
+    </div>`;
+  }).join('')||'<div class="empty">No poles recorded yet</div>';
+}
+function delPole(id){const p=S.poles.find(x=>x.id===id);if(!confirm('Delete pole "'+(p?.code||id)+'"?'))return;S.poles=S.poles.filter(x=>x.id!==id);pSet('poles',S.poles);renderPoleList();}
+function haversine(a,b,c,d){const R=6371000,dL=(c-a)*Math.PI/180,dG=(d-b)*Math.PI/180;const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+
+// ═══════════════════════════════════════════
+// MAP
+// ═══════════════════════════════════════════
+let leafletMap=null,mapMarkers=[],mapPolylines=[],mapOverlayLayers=[],currentTile=null,mapInitialised=false;
+const TILE_LAYERS={
+  osm:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',attr:'© OpenStreetMap'},
+  sat:{url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',attr:'© Esri'},
+  topo:{url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',attr:'© OpenTopoMap'},
+  hybrid:{url:'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',attr:'© Google'}
+};
+
+function poleIcon(poleType,hasGPS,gpsSource,components){
+  components=components||{};
+  const isExisting=poleType==='existing';
+  let shaftCol=!hasGPS?'#e74c3c':isExisting?'#888':poleType==='wooden'?'#8b6240':'#2c3e50';
+  const tintRing=gpsSource==='twonav'?'#2e86de':gpsSource==='pinned'?'#ffce00':gpsSource==='manual'?'#9b59b6':'#7f8c8d';
+  const has=id=>(components[id]||0)>0,cnt=id=>components[id]||0;
+  const W=220,H=200,BX=50,BASE=168,TOP=22,ARM_Y=42,ARM_LEN=26;
+  // Determine if cable is present
+  const hasCable=has('cable_25_2c')||has('cable_50_2c')||has('cable_50_4c')||has('conductor');
+  const cableLabel=has('cable_50_4c')?'50mm²·4C':has('cable_50_2c')?'50mm²·2C':has('cable_25_2c')?'25mm²·2C':has('conductor')?'Cond.':'';
+  const showArm=has('cross_arm')||has('disc_insul')||has('pin_insul')||has('fuse_cutout')||cnt('conductor')>0;
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">`;
+  // Ground shadow
+  svg+=`<ellipse cx="${BX}" cy="${BASE+4}" rx="12" ry="3" fill="#000" opacity="0.3"/>`;
+  svg+=`<line x1="${BX-18}" y1="${BASE+2}" x2="${BX+18}" y2="${BASE+2}" stroke="#ccc" stroke-width="1.2"/>`;
+  if(has('earth_rod')){svg+=`<line x1="${BX-5}" y1="${BASE}" x2="${BX-5}" y2="${BASE+20}" stroke="#2980b9" stroke-width="2"/><line x1="${BX-9}" y1="${BASE+18}" x2="${BX-1}" y2="${BASE+18}" stroke="#2980b9" stroke-width="2"/>`;}
+  // ── Cable at top peak (drawn first, below the pole tip) ──
+  if(hasCable){
+    // Horizontal cable lines spanning across pole top
+    const cw=34;
+    svg+=`<line x1="${BX-cw}" y1="${TOP-4}" x2="${BX+cw}" y2="${TOP-4}" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>`;
+    if(has('cable_50_4c')){
+      svg+=`<line x1="${BX-cw}" y1="${TOP-1}" x2="${BX+cw}" y2="${TOP-1}" stroke="#333" stroke-width="2" stroke-linecap="round"/>`;
+    }
+    // Cable label box at top
+    const cl=cableLabel,cw2=cl.length*4.5+8;
+    svg+=`<rect x="${BX+cw+2}" y="${TOP-11}" width="${cw2}" height="11" rx="2" fill="rgba(255,255,255,0.95)" stroke="#2c3e50" stroke-width="0.8"/>`;
+    svg+=`<text x="${BX+cw+5}" y="${TOP-2}" fill="#2c3e50" font-family="monospace" font-size="7" font-weight="700">${esc(cl)}</text>`;
   }
-});
+  // Tapered pole shaft
+  svg+=`<polygon points="${BX-3},${TOP} ${BX+3},${TOP} ${BX+6},${BASE} ${BX-6},${BASE}" fill="${shaftCol}" stroke="#1a252f" stroke-width="1.5" ${isExisting?'stroke-dasharray="5,3"':''}/>`;
+  svg+=`<polygon points="${BX+1},${TOP} ${BX+3},${TOP} ${BX+6},${BASE} ${BX+2},${BASE}" fill="#fff" opacity="0.13"/>`;
+  // Cross-arm
+  if(showArm){svg+=`<rect x="${BX-ARM_LEN}" y="${ARM_Y-3}" width="${ARM_LEN*2}" height="5" rx="1" fill="#444" stroke="#1a252f" stroke-width="0.8"/>`;}
+  // Insulators
+  if(cnt('disc_insul')+cnt('pin_insul')>0&&showArm){
+    const n=Math.min(3,cnt('disc_insul')+cnt('pin_insul'));
+    const positions=n===1?[BX]:n===2?[BX-12,BX+12]:[BX-16,BX,BX+16];
+    positions.forEach(ix=>{svg+=`<line x1="${ix}" y1="${ARM_Y-3}" x2="${ix}" y2="${ARM_Y-7}" stroke="#333" stroke-width="1"/><ellipse cx="${ix}" cy="${ARM_Y-9}" rx="3" ry="1.5" fill="#ecf0f1" stroke="#888" stroke-width="0.7"/><ellipse cx="${ix}" cy="${ARM_Y-12}" rx="2.5" ry="1.2" fill="#ecf0f1" stroke="#888" stroke-width="0.6"/><ellipse cx="${ix}" cy="${ARM_Y-14.5}" rx="2" ry="1" fill="#ecf0f1" stroke="#888" stroke-width="0.5"/>`});
+  }
+  if(has('lightning_arr')){svg+=`<line x1="${BX}" y1="${TOP}" x2="${BX}" y2="${TOP-10}" stroke="#333" stroke-width="1.2"/><rect x="${BX-2.5}" y="${TOP-16}" width="5" height="6" fill="#ecf0f1" stroke="#000" stroke-width="0.7"/><polygon points="${BX-4},${TOP-16} ${BX+4},${TOP-16} ${BX},${TOP-22}" fill="#f1c40f" stroke="#000" stroke-width="0.7"/>`;}
+  if(has('fuse_cutout')&&showArm){const ix=BX+8;svg+=`<line x1="${ix}" y1="${ARM_Y+2}" x2="${ix}" y2="${ARM_Y+7}" stroke="#222" stroke-width="1"/><rect x="${ix-2}" y="${ARM_Y+7}" width="4" height="11" rx="0.5" fill="#e67e22" stroke="#000" stroke-width="0.7"/>`;}
+  if(has('lt_stay')||has('stay_wire')){const ex=BX+30,ey=BASE-3;svg+=`<line x1="${BX+2}" y1="${ARM_Y+6}" x2="${ex}" y2="${ey}" stroke="#555" stroke-width="2"/><ellipse cx="${(BX+ex)/2}" cy="${(ARM_Y+6+ey)/2}" rx="2" ry="1.2" fill="#ecf0f1" stroke="#888" stroke-width="0.6"/><rect x="${ex-2.5}" y="${ey-2}" width="5" height="4" fill="#666" stroke="#000" stroke-width="0.5"/>`;}
+  // GPS source dot
+  svg+=`<circle cx="${BX}" cy="${BASE-3}" r="5" fill="${tintRing}" stroke="#1a252f" stroke-width="1"/><circle cx="${BX}" cy="${BASE-3}" r="2" fill="#fff"/>`;
+  // ── Component branches — rectangular boxes pointing RIGHT ──
+  const BRANCH_X=BX+12; // branch origin x (right side of pole)
+  const BRANCH_W=68,BRANCH_H=12,BRANCH_GAP=14;
+  const branchItems=[];
+  const addBranch=(name,count,col,zoneY)=>branchItems.push({name,count,col,zoneY});
+  // Build branch list at relevant pole heights
+  if(isExisting)addBranch('Existing Pole',1,'#888',BASE-40);
+  else addBranch({psc:'PSC Pole',wooden:'Wooden',gi:'GI Pole',rcc:'RCC Pole',corner:'Corner',terminal:'Terminal',tee:'Tee-off'}[poleType]||'New Pole',cnt('pole')||1,shaftCol,(TOP+BASE)/2);
+  if(has('cross_arm'))addBranch('Cross-arm',cnt('cross_arm'),'#5d6d7e',ARM_Y);
+  if(has('disc_insul'))addBranch('Disc Insul.',cnt('disc_insul'),'#7f8c8d',ARM_Y-14);
+  if(has('pin_insul'))addBranch('Pin Insul.',cnt('pin_insul'),'#7f8c8d',ARM_Y-8);
+  if(has('lightning_arr'))addBranch('Ltg Arrester',cnt('lightning_arr'),'#e67e22',TOP-12);
+  if(has('fuse_cutout'))addBranch('DO Fuse',cnt('fuse_cutout'),'#e67e22',ARM_Y+12);
+  if(has('anchor_clamp'))addBranch('Anchor Clamp',cnt('anchor_clamp'),'#7f8c8d',ARM_Y+22);
+  if(has('susp_clamp'))addBranch('Susp.Clamp',cnt('susp_clamp'),'#7f8c8d',ARM_Y+14);
+  if(has('lt_stay'))addBranch('LT Stay',cnt('lt_stay'),'#5d6d7e',ARM_Y+36);
+  if(has('earth_rod'))addBranch('Earth Rod',cnt('earth_rod'),'#2980b9',BASE+8);
+  if(has('i_bolt'))addBranch('I-Bolt',cnt('i_bolt'),'#5d6d7e',ARM_Y+4);
+  if(has('connector_ipc'))addBranch('IPC Conn.',cnt('connector_ipc'),'#16a085',ARM_Y+28);
+  if(has('pg_clamp'))addBranch('PG Clamp',cnt('pg_clamp'),'#16a085',ARM_Y+20);
+  // Sort by zone Y and avoid overlap
+  branchItems.sort((a,b)=>a.zoneY-b.zoneY);
+  let lastBY=-999;
+  branchItems.forEach(item=>{
+    let by=item.zoneY;
+    if(by-lastBY<BRANCH_GAP)by=lastBY+BRANCH_GAP;
+    lastBY=by;
+    const txt=item.name+(item.count>1?` ×${item.count}`:'');
+    const tw=Math.max(BRANCH_W,txt.length*4.8+10);
+    // Connector line from pole shaft to box
+    svg+=`<line x1="${BRANCH_X}" y1="${by}" x2="${BRANCH_X+10}" y2="${by}" stroke="${item.col}" stroke-width="0.9" opacity="0.7"/>`;
+    // Rectangular box
+    svg+=`<rect x="${BRANCH_X+10}" y="${by-6}" width="${tw}" height="${BRANCH_H}" rx="2" fill="rgba(255,255,255,0.96)" stroke="${item.col}" stroke-width="0.9"/>`;
+    svg+=`<text x="${BRANCH_X+14}" y="${by+3}" fill="${item.col}" font-family="monospace" font-size="7" font-weight="700">${esc(txt)}</text>`;
+  });
+  svg+='</svg>';
+  return L.divIcon({html:svg,className:'',iconSize:[W,H],iconAnchor:[BX,BASE+4],popupAnchor:[0,-BASE+10]});
+}
+function simplePoleDot(poleType,hasGPS,gpsSource){
+  const col=!hasGPS?'#e74c3c':gpsSource==='twonav'?'#2e86de':poleType==='existing'?'#bbb':'#154360';
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="${col}" stroke="#fff" stroke-width="1.5"/></svg>`;
+  return L.divIcon({html:svg,className:'',iconSize:[14,14],iconAnchor:[7,7],popupAnchor:[0,-9]});
+}
+
+let pinPoleTarget=null,pinPoleCode=null;
+function startPinMode(poleId,poleCode){pinPoleTarget=poleId;pinPoleCode=poleCode;toast('📍 Tap map to set location for '+poleCode,'#154360');const m=document.getElementById('pole-map');if(m)m.style.cursor='crosshair';refreshMap();}
+function cancelPinMode(){pinPoleTarget=null;pinPoleCode=null;const m=document.getElementById('pole-map');if(m)m.style.cursor='';refreshMap();}
+function onMapClick(e){
+  if(!pinPoleTarget)return;
+  const pole=S.poles.find(p=>p.id===pinPoleTarget);if(!pole){cancelPinMode();return;}
+  pole.lat=+e.latlng.lat.toFixed(7);pole.lng=+e.latlng.lng.toFixed(7);pole.pinnedManually=true;
+  const idx=S.poles.indexOf(pole);
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  pSet('poles',S.poles);toast('📍 '+pinPoleCode+' pinned','#00a86b');if(navigator.vibrate)navigator.vibrate(40);
+  pinPoleTarget=null;pinPoleCode=null;document.getElementById('pole-map').style.cursor='';
+  refreshMap();renderPoleList();
+}
+
+function initMap(){
+  if(mapInitialised)return;
+  if(!document.getElementById('pole-map'))return;
+  let centre=[27.546,83.057],zoom=14;
+  const gps=S.poles.filter(p=>p.lat&&p.lng);
+  if(gps.length){centre=[gps[0].lat,gps[0].lng];zoom=17;}
+  leafletMap=L.map('pole-map',{center:centre,zoom,zoomControl:true,scrollWheelZoom:true,doubleClickZoom:true,touchZoom:true,boxZoom:true,keyboard:true});
+  currentTile=L.tileLayer(TILE_LAYERS.osm.url,{attribution:TILE_LAYERS.osm.attr,maxZoom:20,crossOrigin:true}).addTo(leafletMap);
+  mapInitialised=true;
+  leafletMap.on('zoomend',refreshOverlays);
+  leafletMap.on('click',onMapClick);
+  // Restore GPX tracks from storage
+  try{const saved=lsGet(pk('gpxTracks'),null);if(saved&&saved.length){gpxTracks=saved;updateGPXUI();}}catch(e){}
+  const allPts=getAllGpxPts();
+  if(allPts.length){
+    leafletMap.fitBounds(L.latLngBounds(allPts.map(p=>[p.lat,p.lng])),{padding:[30,30],maxZoom:18});
+  }
+  refreshMap();
+}
+function switchTile(key){
+  if(!leafletMap)return;
+  if(currentTile)leafletMap.removeLayer(currentTile);
+  currentTile=L.tileLayer(TILE_LAYERS[key].url,{attribution:TILE_LAYERS[key].attr,maxZoom:20,crossOrigin:true}).addTo(leafletMap);
+  ['osm','sat','topo','hybrid'].forEach(k=>{const b=document.getElementById('tile-'+k+'-btn');if(b)b.className=k===key?'btn bp sm':'btn bo sm';});
+}
+function poleGpsSource(p){if(!p.lat)return 'none';if(p.gpsSource)return p.gpsSource;if(p.pinnedManually)return 'pinned';if(p.gps&&p.gps.manual)return 'manual';return 'phone';}
+
+// ═══════════════════════════════════════════
+// LOCATION-AWARE GPX → POLE MATCHING
+// ═══════════════════════════════════════════
+// Normalise a location string for fuzzy comparison (lowercase, strip punctuation/extra spaces).
+function normLoc(s){return String(s||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]+/g,' ').trim();}
+// "Almost matches": exact after normalisation, or one contains the other, or token overlap.
+function locAlmostMatches(a,b){
+  const x=normLoc(a),y=normLoc(b);
+  if(!x||!y)return false;
+  if(x===y)return true;
+  if(x.includes(y)||y.includes(x))return true;
+  // Token (word) overlap, ignoring very short/generic words.
+  const stop=new Set(['the','of','at','near','ward','no','area','tole','location','place','site']);
+  const toks=s=>s.split(' ').filter(t=>t.length>2&&!stop.has(t));
+  const tx=toks(x), ty=toks(y);
+  if(!tx.length||!ty.length)return false;
+  const sx=new Set(tx);
+  let hit=0; ty.forEach(t=>{if(sx.has(t))hit++;});
+  // Require a strong overlap relative to BOTH sets, not just the shorter one,
+  // so generic single-word coincidences don't falsely match.
+  return hit>0 && (hit/tx.length>=0.6) && (hit/ty.length>=0.6);
+}
+
+// Bind a GPX track to a single recorded location, then fill GPS into that location's poles.
+// This prevents a wpt001 at location B from overwriting wpt001 at location A.
+function autoLinkTrackToPoles(pts){
+  const named=pts.filter(p=>p.name&&p.name.trim());
+  if(!named.length||!S.poles.length)return;
+
+  // Candidate locations = locations that have at least one UNMATCHED pole whose code
+  // equals one of this track's waypoint names.
+  const trackCodes=new Set(named.map(p=>p.name.trim()));
+  const locScore={}; // location -> how many of this track's codes it can still supply
+  S.poles.forEach(p=>{
+    if(p.lat&&p.lng)return;                 // already matched/positioned
+    if(!trackCodes.has(p.code))return;
+    const loc=p.location||'';
+    locScore[loc]=(locScore[loc]||0)+1;
+  });
+  const locs=Object.keys(locScore);
+  if(!locs.length)return;                   // nothing left to fill
+
+  // Pick the location that can satisfy the most of this track's codes.
+  // Ties broken by the longest matching run from the track's first waypoint.
+  let boundLoc=locs[0];
+  locs.forEach(l=>{if(locScore[l]>locScore[boundLoc])boundLoc=l;});
+
+  // Within the bound location, match each waypoint name to its (still unmatched) pole.
+  named.forEach(pt=>{
+    const code=pt.name.trim();
+    const pole=S.poles.find(p=>p.code===code && (p.location||'')===boundLoc && (!p.lat||!p.lng));
+    if(!pole)return;
+    pole.lat=+pt.lat.toFixed(7);
+    pole.lng=+pt.lng.toFixed(7);
+    pole.gpsSource='gpx';
+    const idx=S.poles.indexOf(pole);
+    if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+    if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  });
+  pSet('poles',S.poles);
+}
+
+function refreshMap(){
+  if(!leafletMap)return;
+  mapMarkers.forEach(m=>leafletMap.removeLayer(m));mapPolylines.forEach(p=>leafletMap.removeLayer(p));mapOverlayLayers.forEach(l=>leafletMap.removeLayer(l));
+  mapMarkers=[];mapPolylines=[];mapOverlayLayers=[];
+  if(gpxTrackLayer){leafletMap.removeLayer(gpxTrackLayer);gpxTrackLayer=null;}
+
+  // ── Draw each GPX track ──
+  const trackColors=['#2e86de','#e74c3c','#8e44ad','#f39c12','#16a085','#2c3e50'];
+  if(gpxTracks.length&&gpxTrackVisible){
+    const zoom=leafletMap.getZoom();
+
+    gpxTracks.forEach((track,ti)=>{
+      const pts=track.pts;
+      if(!pts.length)return;
+      const tCol=trackColors[ti%trackColors.length];
+      const coords=pts.map(p=>[p.lat,p.lng]);
+
+      // Route polyline (coloured by track)
+      const sh=L.polyline(coords,{color:'#000',weight:6,opacity:.25}).addTo(leafletMap);
+      const mn=L.polyline(coords,{color:tCol,weight:3,opacity:.85}).addTo(leafletMap);
+      mn.bindPopup(`<b style="color:${tCol}">📡 ${esc(track.name)}</b><br>${pts.length} pts · ${(computeTrackLength(pts)/1000).toFixed(2)}km`);
+      mapOverlayLayers.push(sh,mn);
+
+      // ── PASS 1: Auto-link this track's named waypoints to recorded poles. ──
+      // Codes like wpt001 can repeat across different locations, so we bind the whole
+      // track to ONE location first, then only match waypoints to poles in that location.
+      autoLinkTrackToPoles(pts);
+
+      // ── PASS 2: Render dots/labels only if zoomed in enough; otherwise just the polyline ──
+      // Below z=15 the map is too zoomed out for any GPX dot/label without clutter.
+      if(zoom<15)return;
+
+      // Build matched-pole lookup once (used only for auto-linking — no longer for skipping render)
+      const matchedNames=new Set(S.poles.map(p=>p.code));
+
+      // Collect candidates: all NAMED waypoints get visible dots/labels (matched or not).
+      // Recorded poles are NOT drawn on the map; the GPX waypoint is the single visual.
+      // Unnamed track points are not labelled (the polyline already shows the route).
+      const candidates=[];
+      let cumDist=0;
+      pts.forEach((pt,i)=>{
+        if(i>0)cumDist+=haversine(pts[i-1].lat,pts[i-1].lng,pt.lat,pt.lng);
+        const nm=(pt.name||'').trim();
+        if(!nm)return;                  // skip unnamed
+        candidates.push({pt,i,nm,cumDist,isMatched:matchedNames.has(nm)});
+      });
+
+      // Cap how many labels we show to avoid clutter on dense tracks.
+      // At z=15 show up to 30 labels, z>=17 show up to 200.
+      const maxLabels=zoom>=17?200:zoom>=16?80:30;
+      const lblStep=Math.max(1,Math.ceil(candidates.length/maxLabels));
+
+      candidates.forEach((c,ci)=>{
+        const showLbl=(ci%lblStep===0)||ci===0||ci===candidates.length-1;
+        const {pt,nm,cumDist}=c;
+
+        // Always draw a tiny black dot for named unmatched waypoints
+        const tooltipHTML=`<div style="font-weight:700;font-size:12px;color:#154360">${esc(nm)}</div>`
+          +`<div style="font-size:10px;color:#555">${esc(track.name)}</div>`
+          +`<div style="font-size:10px;color:#333">${pt.lat.toFixed(6)}, ${pt.lng.toFixed(6)}`
+          +(pt.ele!=null?` · ${pt.ele.toFixed(0)}m`:'')
+          +(cumDist>0?` · ${cumDist.toFixed(0)}m from start`:'')
+          +'</div>';
+        const dot=L.circleMarker([pt.lat,pt.lng],{
+          radius:3,color:'#111',fillColor:'#111',fillOpacity:0.85,weight:1
+        }).bindTooltip(tooltipHTML,{direction:'top',sticky:false}).addTo(leafletMap);
+        mapOverlayLayers.push(dot);
+
+        // Permanent name label using Leaflet's tooltip — always click-through, never blocks pan/zoom
+        if(showLbl){
+          const lbl=L.tooltip({
+            permanent:true,direction:'right',offset:[4,0],
+            className:'fg-perm-lbl',interactive:false,opacity:1
+          }).setLatLng([pt.lat,pt.lng]).setContent(`<span class="fg-map-lbl">${esc(nm)}</span>`).addTo(leafletMap);
+          mapOverlayLayers.push(lbl);
+        }
+      });
+
+      // ── PASS 3: Inter-waypoint span labels — only at high zoom, only between NAMED neighbours ──
+      if(zoom>=16){
+        for(let k=1;k<candidates.length;k++){
+          const a=candidates[k-1],b=candidates[k];
+          // Only label spans between sequentially adjacent named points in the track
+          if(b.i-a.i>5)continue;          // too many unnamed points between → not a real span
+          const segDist=haversine(a.pt.lat,a.pt.lng,b.pt.lat,b.pt.lng);
+          if(segDist<3)continue;
+          const mLat=(a.pt.lat+b.pt.lat)/2,mLng=(a.pt.lng+b.pt.lng)/2;
+          const spanLbl=L.tooltip({
+            permanent:true,direction:'center',offset:[0,0],
+            className:'fg-perm-lbl',interactive:false,opacity:1
+          }).setLatLng([mLat,mLng]).setContent(`<span class="fg-map-lbl fg-map-span">${segDist.toFixed(0)}m</span>`).addTo(leafletMap);
+          mapOverlayLayers.push(spanLbl);
+        }
+      }
+    });
+  }
+
+  // ── Poles without GPS warning ──
+  const polesWithGPS=S.poles.filter(p=>p.lat&&p.lng);
+  const polesWithoutGPS=S.poles.filter(p=>!p.lat||!p.lng);
+  const noGPS=document.getElementById('no-gps-poles');
+  if(noGPS){
+    if(polesWithoutGPS.length){
+      noGPS.style.display='block';
+      const pinHint=pinPoleTarget?`<div style="margin-top:6px;font-size:11px;font-weight:700;color:var(--primary)">📍 Tap map for <b>${esc(pinPoleCode)}</b> · <a href="#" onclick="cancelPinMode();return false" style="color:var(--danger)">cancel</a></div>`:'';
+      noGPS.innerHTML='<b>⚠ '+polesWithoutGPS.length+' pole(s) with no GPS — tap to pin on map:</b><div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">'+polesWithoutGPS.map(p=>`<button class="btn bo sm" style="font-size:10px" onclick="startPinMode('${esc(p.id)}','${esc(p.code)}')">📍 ${esc(p.code)}</button>`).join('')+'</div>'+pinHint;
+    }else noGPS.style.display='none';
+  }
+  const badge=document.getElementById('map-stats-badge');
+  if(badge)badge.innerHTML='<b>'+polesWithGPS.length+'</b>/'+S.poles.length+' poles'+(polesWithoutGPS.length?' · <b style="color:var(--danger)">'+polesWithoutGPS.length+' need pin</b>':'');
+  if(!polesWithGPS.length)return;
+
+  // Pole overlays are no longer drawn on the map (GPX is the only on-map layer).
+  // These remain as constants so the (disabled) pole-render block still compiles.
+  const showCables=true,showLabels=true,showSpans=true;
+
+  // ── Recorded poles are intentionally NOT drawn on the map. ──
+  // The GPX waypoints + track polyline are the single source of truth on screen.
+  // Recorded-pole data (coords, span, components, remarks) still flows through to
+  // the Excel export, the BOM, the schedule, the PDF map export, etc.
+  const RENDER_POLES_ON_MAP=false;
+
+  // ── Cable lines between poles ──
+  if(RENDER_POLES_ON_MAP&&showCables){
+    for(let i=1;i<S.poles.length;i++){
+      const prev=S.poles[i-1],cur=S.poles[i];
+      if(!prev.lat||!prev.lng||!cur.lat||!cur.lng)continue;
+      if(cur.connectedToPrev===false)continue;
+      const col=cur.poleType==='existing'?'#888':NEW_COL;
+      const sh=L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]],{color:'#000',weight:5,opacity:.25}).addTo(leafletMap);
+      const pl=L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]],{color:col,weight:3,opacity:.9}).addTo(leafletMap);
+      mapPolylines.push(sh,pl);
+      if(showSpans&&cur.span){
+        const mLat=(prev.lat+cur.lat)/2,mLng=(prev.lng+cur.lng)/2;
+        const lbl=L.marker([mLat,mLng],{icon:L.divIcon({html:`<span class="fg-map-lbl fg-map-span">${cur.span}m</span>`,className:'fg-lbl-wrap',iconSize:[1,1],iconAnchor:[12,6]}),interactive:false,keyboard:false}).addTo(leafletMap);
+        mapOverlayLayers.push(lbl);
+      }
+    }
+  }
+
+  // ── Pole markers (suppressed on map by design — see RENDER_POLES_ON_MAP) ──
+  if(RENDER_POLES_ON_MAP)polesWithGPS.forEach(p=>{
+    const srcCode=poleGpsSource(p);
+    const isExisting=p.poleType==='existing';
+    const compEntries=Object.entries(p.components||{}).filter(e=>e[1]>0);
+    const compHTML=compEntries.map(e=>{const n=S.components.find(c=>c.id===e[0])?.name||e[0];return`<span class="pole-popup-comp">${esc(n)} ×${e[1]}</span>`;}).join('');
+    const snapBtn=gpxTracks.length&&srcCode!=='twonav'?`<br><button onclick="snapPoleToTrack('${esc(p.id)}')" style="background:#2e86de;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;margin-top:5px">🎯 Snap to GPS track</button>`:'';
+    const editBtn=`<br><button onclick="leafletMap.closePopup();goPage('record');setTimeout(()=>startEditPole('${esc(p.id)}'),200)" style="background:var(--primary,#154360);color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;margin-top:5px"><i class='fa fa-pen'></i> Edit</button>`;
+    const popupHTML=`<div class="pole-popup-code">${esc(p.code)}</div><div class="pole-popup-row"><b>${esc(p.location||'—')}</b> · ${p.poleType||'—'}${p.span?' · '+p.span+'m':''}</div><div class="pole-popup-row">📍 ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}${p.acc?' ±'+p.acc.toFixed(1)+'m':''}</div>${p.remarks?`<div class="pole-popup-row" style="font-style:italic">${esc(p.remarks)}</div>`:''}<div style="margin-top:5px;line-height:1.8">${compHTML}</div>${snapBtn}${editBtn}`;
+
+    // Big clear circle dot — solid for new, dashed-ring for existing
+    const marker=L.circleMarker([p.lat,p.lng],{
+      radius:isExisting?9:10,
+      color:isExisting?'#666':'#0a2a42',
+      fillColor:isExisting?'#bbb':NEW_COL,
+      fillOpacity:isExisting?0.55:0.9,
+      weight:isExisting?2.5:2,
+      dashArray:isExisting?'5,3':null
+    }).bindPopup(popupHTML,{maxWidth:280,minWidth:180}).addTo(leafletMap);
+    mapMarkers.push(marker);
+
+    // Code label above dot — plain bold text with white halo, NO rectangular box, click-through
+    if(showLabels){
+      const lm=L.marker([p.lat,p.lng],{icon:L.divIcon({html:`<span class="fg-map-lbl fg-pole-code">${esc(p.code)}</span>`,className:'fg-lbl-wrap',iconSize:[1,1],iconAnchor:[20,24]}),interactive:false,keyboard:false,zIndexOffset:50}).addTo(leafletMap);
+      mapOverlayLayers.push(lm);
+    }
+  });
+
+  const totalSpan=S.poles.reduce((a,p)=>a+(p.span||0),0);
+  if(badge)badge.innerHTML='<b>'+polesWithGPS.length+'</b>/'+S.poles.length+' · <b>'+totalSpan.toFixed(0)+'m</b>'+(polesWithoutGPS.length?' · <b style="color:var(--danger)">'+polesWithoutGPS.length+' need pin</b>':'');
+  // IMPORTANT: do NOT fit/zoom here. refreshMap runs on every zoomend; re-fitting would
+  // instantly snap the view back and make manual zoom impossible. Fitting happens only on
+  // explicit triggers: initial map load, the Fit All button, and right after GPX import.
+}
+function refreshOverlays(){refreshMap();}
+function fitMapToPoles(){
+  const polePts=S.poles.filter(p=>p.lat&&p.lng).map(p=>[p.lat,p.lng]);
+  const gpxPts=getAllGpxPts().map(p=>[p.lat,p.lng]);
+  const pts=[...polePts,...gpxPts];
+  if(!pts.length||!leafletMap)return;
+  if(pts.length===1){leafletMap.setView(pts[0],17);return;}
+  leafletMap.fitBounds(L.latLngBounds(pts),{padding:[40,40],maxZoom:18});
+}
+
+// ═══════════════════════════════════════════
+// GPX IMPORT — multi-file, track points, spans
+// ═══════════════════════════════════════════
+let gpxTracks=[],gpxTrackLayer=null,gpxTrackVisible=true;
+// Legacy alias so snapping still works
+function getAllGpxPts(){return gpxTracks.flatMap(t=>t.pts);}
+// Keep pSet/lsGet compatible
+function saveGpxState(){try{pSet('gpxTracks',gpxTracks.map(t=>({name:t.name,pts:t.pts})));}catch(e){}}
+function loadGpxState(){try{const d=pSet?lsGet(pk('gpxTracks'),null):null;if(d&&d.length){gpxTracks=d;}}catch(e){}}
+
+function parseGPXFile(text,fileName){
+  const xml=new DOMParser().parseFromString(text,'text/xml');
+  const parseErr=xml.querySelector('parsererror');
+  if(parseErr)throw new Error('Invalid XML/GPX: '+parseErr.textContent.slice(0,50));
+  const pts=[];
+  let nodes=Array.from(xml.querySelectorAll('trkpt'));
+  if(!nodes.length)nodes=Array.from(xml.querySelectorAll('rtept'));
+  if(!nodes.length)nodes=Array.from(xml.querySelectorAll('wpt'));
+  if(!nodes.length){
+    const ns=xml.documentElement.getAttribute('xmlns')||'';
+    if(ns)nodes=Array.from(xml.getElementsByTagNameNS(ns,'trkpt'));
+    if(!nodes.length&&ns)nodes=Array.from(xml.getElementsByTagNameNS(ns,'rtept'));
+  }
+  nodes.forEach((node,i)=>{
+    const lat=parseFloat(node.getAttribute('lat')||node.getAttribute('LAT')||'');
+    const lng=parseFloat(node.getAttribute('lon')||node.getAttribute('LON')||node.getAttribute('lng')||'');
+    if(!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0){
+      const ele=parseFloat(node.querySelector('ele')?.textContent)||null;
+      const time=node.querySelector('time')?.textContent||null;
+      const name=node.querySelector('name')?.textContent||null;
+      pts.push({lat,lng,ele,time,name,idx:i});
+    }
+  });
+  const trackName=xml.querySelector('trk>name,rte>name')?.textContent||fileName.replace(/\.gpx$/i,'').replace(/_/g,' ');
+  return{name:trackName,pts};
+}
+
+function importGPXFiles(files){
+  if(!files||!files.length)return;
+  let loaded=0,errors=[];
+  Array.from(files).forEach(file=>{
+    const reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        const track=parseGPXFile(e.target.result,file.name);
+        if(!track.pts.length){errors.push(file.name+': no pts');return;}
+        // Replace if same name, otherwise append
+        const existing=gpxTracks.findIndex(t=>t.name===track.name);
+        if(existing>=0)gpxTracks[existing]=track;else gpxTracks.push(track);
+        loaded++;
+      }catch(err){errors.push(file.name+': '+err.message.slice(0,40));}
+      if(loaded+errors.length===files.length){
+        saveGpxState();
+        updateGPXUI();
+        if(!mapInitialised)initMap();
+        refreshMap();
+        // Auto-fit to all track bounds
+        const allPts=getAllGpxPts();
+        if(leafletMap&&allPts.length){
+          leafletMap.fitBounds(L.latLngBounds(allPts.map(p=>[p.lat,p.lng])),{padding:[30,30],maxZoom:18});
+        }
+        const msg=loaded+' track(s) loaded'+(errors.length?' · '+errors.length+' error(s)':'');
+        toast('📡 '+msg,'#2e86de');
+        if(errors.length)console.warn('GPX errors:',errors);
+      }
+    };
+    reader.readAsText(file);
+  });
+  document.getElementById('gpx-file-input').value='';
+}
+
+function updateGPXUI(){
+  const allPts=getAllGpxPts();
+  const totalKm=(computeTrackLength(allPts)/1000).toFixed(2);
+  const fc=document.getElementById('gpx-file-count');
+  if(fc){fc.textContent=gpxTracks.length+' file'+(gpxTracks.length!==1?'s':'');fc.style.display=gpxTracks.length?'':'none';}
+  document.getElementById('gpx-status').innerHTML=
+    gpxTracks.length?'✅ <b>'+gpxTracks.length+'</b> track file(s) · <b>'+allPts.length+'</b> pts total · <b>'+totalKm+' km</b>':
+    'No GPX imported.';
+  // File list
+  const fl=document.getElementById('gpx-file-list');
+  if(fl){
+    fl.style.display=gpxTracks.length?'block':'none';
+    fl.innerHTML=gpxTracks.map((t,i)=>`
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:10.5px">
+        <span style="flex:1;color:var(--text)"><b>${esc(t.name)}</b> <span style="color:var(--text3)">${t.pts.length} pts · ${(computeTrackLength(t.pts)/1000).toFixed(2)}km</span></span>
+        <button class="btn bd sm" style="padding:2px 8px;font-size:10px" onclick="removeGPXTrack(${i})">✕</button>
+      </div>`).join('');
+  }
+  const show=gpxTracks.length>0;
+  ['gpx-show-btn','gpx-sync-btn','snap-all-btn','gpx-clear-btn'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display=show?'':'none';});
+  const leg=document.getElementById('gpx-legend');if(leg)leg.style.display=show?'block':'none';
+  if(show){document.getElementById('gpx-show-btn').innerHTML=gpxTrackVisible?'<i class="fa fa-eye-slash"></i> Hide tracks':'<i class="fa fa-eye"></i> Show tracks';}
+}
+
+function removeGPXTrack(i){
+  gpxTracks.splice(i,1);saveGpxState();updateGPXUI();refreshMap();
+  toast('Track removed');
+}
+function computeTrackLength(pts){let d=0;for(let i=1;i<pts.length;i++)d+=haversine(pts[i-1].lat,pts[i-1].lng,pts[i].lat,pts[i].lng);return d;}
+function toggleGpxTrack(){
+  gpxTrackVisible=!gpxTrackVisible;
+  document.getElementById('gpx-show-btn').innerHTML=gpxTrackVisible?'<i class="fa fa-eye-slash"></i> Hide tracks':'<i class="fa fa-eye"></i> Show tracks';
+  refreshMap();
+}
+function clearGPX(){
+  if(!confirm('Clear all GPX tracks? Snapped pole locations are kept.'))return;
+  gpxTracks=[];saveGpxState();updateGPXUI();refreshMap();toast('All tracks cleared');
+}
+function nearestTrackPoint(lat,lng){
+  const allPts=getAllGpxPts();
+  if(!allPts.length)return null;
+  let best=null,bestD=Infinity;
+  for(const pt of allPts){const d=haversine(lat,lng,pt.lat,pt.lng);if(d<bestD){bestD=d;best=pt;}}
+  return best?{point:best,dist:bestD}:null;
+}
+function snapPoleToTrack(poleId){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const pole=S.poles.find(p=>p.id===poleId);if(!pole)return;
+  if(!pole.lat){toast('⚠ Pole has no GPS. Use 📍 pin first.','#e74c3c');return;}
+  const near=nearestTrackPoint(pole.lat,pole.lng);if(!near){toast('⚠ Track empty');return;}
+  if(near.dist>100&&!confirm('Nearest track point is '+near.dist.toFixed(0)+'m away. Snap anyway?'))return;
+  pole.lat=near.point.lat;pole.lng=near.point.lng;pole.acc=3;pole.gpsSource='twonav';pole.pinnedManually=false;
+  recalcAdjacentSpans(pole);pSet('poles',S.poles);
+  toast('🎯 '+pole.code+' snapped ('+near.dist.toFixed(1)+'m off)','#2e86de');if(navigator.vibrate)navigator.vibrate(40);
+  refreshMap();renderPoleList();
+}
+function snapAllPoles(){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const candidates=S.poles.filter(p=>p.lat);if(!candidates.length){toast('⚠ No poles with GPS yet');return;}
+  let snapped=0,farPoles=[];
+  candidates.forEach(p=>{const near=nearestTrackPoint(p.lat,p.lng);if(!near)return;if(near.dist>100){farPoles.push(p.code);return;}p.lat=near.point.lat;p.lng=near.point.lng;p.acc=3;p.gpsSource='twonav';p.pinnedManually=false;snapped++;});
+  S.poles.forEach(p=>{if(p.gpsSource==='twonav')recalcAdjacentSpans(p);});
+  pSet('poles',S.poles);
+  toast('🎯 Snapped '+snapped+' pole(s)'+(farPoles.length?' · Skipped '+farPoles.length:''),'#2e86de');
+  refreshMap();renderPoleList();
+}
+function recalcAdjacentSpans(pole){
+  const idx=S.poles.indexOf(pole);
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+}
+
+// ═══════════════════════════════════════════
+// SYNC POLES FROM GPX BY NAME MATCH
+// ═══════════════════════════════════════════
+function syncAllFromGPX(){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const allPts=getAllGpxPts();
+  let linked=0,already=0,noMatch=0;
+  S.poles.forEach(pole=>{
+    const match=allPts.find(pt=>pt.name&&pt.name.trim()===pole.code);
+    if(!match){noMatch++;return;}
+    if(pole.lat&&pole.lng){already++;} // already has coords — update span only
+    pole.lat=+match.lat.toFixed(7);
+    pole.lng=+match.lng.toFixed(7);
+    pole.gpsSource='gpx';
+    recalcAdjacentSpans(pole);
+    linked++;
+  });
+  pSet('poles',S.poles);
+  const msg=`✅ Linked ${linked} pole(s) · ${already} updated · ${noMatch} unmatched`;
+  toast(msg,'#00a86b');
+  refreshMap();renderPoleList();
+}
+function populateSLDSels(){
+  const codes=S.poles.map(p=>p.code);
+  document.getElementById('sld-from').innerHTML='<option value="">From…</option>'+codes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('sld-to').innerHTML='<option value="">To…</option>'+codes.map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+function dominantCable(comps){
+  const cables=[{id:'cable_50_4c',label:'50mm²·4C'},{id:'cable_50_2c',label:'50mm²·2C'},{id:'cable_25_2c',label:'25mm²·2C'},{id:'conductor',label:'Cond.'}];
+  for(const cb of cables)if(comps[cb.id]>0)return cb.label;return'—';
+}
+function makeSym(id,cx,cy,col){
+  switch(id){
+    case'pole':return`<line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-8}" y1="${cy-4}" x2="${cx+8}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case'disc_insul':case'pin_insul':return`<circle cx="${cx}" cy="${cy}" r="6" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx-4}" y1="${cy}" x2="${cx+4}" y2="${cy}" stroke="${col}" stroke-width="1.5"/>`;
+    case'cross_arm':return`<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx}" y1="${cy-5}" x2="${cx}" y2="${cy+5}" stroke="${col}" stroke-width="2"/>`;
+    case'fuse_cutout':return`<rect x="${cx-4}" y="${cy-7}" width="8" height="14" rx="2" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="1.5" stroke-dasharray="2,2"/>`;
+    case'lightning_arr':return`<polygon points="${cx},${cy-10} ${cx+5},${cy} ${cx+2},${cy} ${cx+7},${cy+10} ${cx-7},${cy+1} ${cx-2},${cy+1}" fill="${col}" stroke="${col}" stroke-width="0.5"/>`;
+    case'lt_stay':return`<line x1="${cx-8}" y1="${cy-8}" x2="${cx+8}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case'anchor_clamp':return`<rect x="${cx-7}" y="${cy-5}" width="14" height="10" rx="2" fill="none" stroke="${col}" stroke-width="2"/>`;
+    case'earth_rod':return`<line x1="${cx}" y1="${cy-9}" x2="${cx}" y2="${cy+9}" stroke="${col}" stroke-width="2.5"/><line x1="${cx-6}" y1="${cy+5}" x2="${cx+6}" y2="${cy+5}" stroke="${col}" stroke-width="2"/><line x1="${cx-3}" y1="${cy+8}" x2="${cx+3}" y2="${cy+8}" stroke="${col}" stroke-width="1.5"/>`;
+    case'connector_ipc':case'pg_clamp':return`<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="${col}" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="3" fill="${col}"/>`;
+    case'cable_25_2c':case'cable_50_2c':return`<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="3" stroke-linecap="round"/>`;
+    case'cable_50_4c':return`<line x1="${cx-9}" y1="${cy-4}" x2="${cx+9}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+8}" x2="${cx+9}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    default:return`<rect x="${cx-6}" y="${cy-6}" width="12" height="12" rx="2" fill="none" stroke="${col}" stroke-width="2"/>`;
+  }
+}
+function renderSLD(){
+  const host=document.getElementById('sld-canvas-wrap');
+  if(!S.poles.length){host.innerHTML='<div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">Record poles first, then press Draw</div>';return;}
+  const fromCode=document.getElementById('sld-from').value,toCode=document.getElementById('sld-to').value;
+  let poles=S.poles;
+  if(fromCode||toCode){const fi=fromCode?poles.findIndex(p=>p.code===fromCode):0,ti=toCode?poles.findIndex(p=>p.code===toCode):poles.length-1;if(fi>=0&&ti>=fi)poles=poles.slice(fi,ti+1);}
+  const estIds=new Set(S.components.filter(c=>c.est>0).map(c=>c.id));
+  const ZONE={pole:'mid',cross_arm:'arm',lightning_arr:'top',pin_insul:'top',disc_insul:'arm',pg_clamp:'arm',connector_ipc:'arm',fuse_cutout:'upper',anchor_clamp:'upper',susp_clamp:'upper',d_iron:'upper',i_bolt:'mid',lt_stay:'stay',stay_wire:'stay',earth_rod:'ground',conductor:'line',cable_25_2c:'line',cable_50_2c:'line',cable_50_4c:'line'};
+  const COL_W=120,PAD_L=50,LEGEND_H=28,PLATE_H=30,PLATE_W=COL_W-18,PLATE_Y=LEGEND_H+6,ARM_Y=PLATE_Y+PLATE_H+34,POLE_TOP=ARM_Y-20,POLE_BOT=ARM_Y+100,BUS_Y=ARM_Y,LBL_LIST_Y=POLE_BOT+22;
+  const maxLblRows=Math.max(0,...poles.map(p=>Object.values(p.components||{}).filter(v=>v>0).length));
+  const W=PAD_L+poles.length*COL_W+30,H=LBL_LIST_Y+maxLblRows*13+30;
+  // White background SLD for printability
+  let s=`<svg id="sld-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="min-width:${W}px;height:${H}px;background:#fff;display:block">`;
+  // Grid
+  for(let gx=0;gx<W;gx+=40)s+=`<line x1="${gx}" y1="0" x2="${gx}" y2="${H}" stroke="#f0f0f0" stroke-width="0.5"/>`;
+  for(let gy=0;gy<H;gy+=40)s+=`<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="#f0f0f0" stroke-width="0.5"/>`;
+  // Legend
+  s+=`<rect x="0" y="0" width="${W}" height="${LEGEND_H}" fill="#eaf2f8"/>`;
+  s+=`<rect x="8" y="9" width="10" height="10" rx="2" fill="${NEW_COL}"/><text x="22" y="18" fill="${NEW_COL}" font-size="9" font-family="Arial" font-weight="700">New / Field</text>`;
+  s+=`<rect x="100" y="9" width="10" height="10" rx="2" fill="${EST_COL}"/><text x="114" y="18" fill="${EST_COL}" font-size="9" font-family="Arial" font-weight="700">Estimated</text>`;
+  s+=`<text x="${W-6}" y="18" fill="#888" font-size="8" text-anchor="end" font-family="Arial">FieldGrid SLD — ${today()}</text>`;
+  // LT bus
+  const busX1=PAD_L,busX2=PAD_L+(poles.length-1)*COL_W;
+  s+=`<line x1="${busX1-10}" y1="${BUS_Y}" x2="${busX2+10}" y2="${BUS_Y}" stroke="${EST_COL}" stroke-width="2.5"/>`;
+  s+=`<text x="${busX1-14}" y="${BUS_Y-8}" fill="${EST_COL}" font-size="8" text-anchor="end" font-weight="700" font-family="Arial">LT SOURCE</text>`;
+  // Cable spans
+  poles.forEach((p,i)=>{
+    if(i===0)return;
+    const px=PAD_L+i*COL_W,ppx=PAD_L+(i-1)*COL_W,mid=(ppx+px)/2;
+    if(p.connectedToPrev===false){s+=`<line x1="${ppx}" y1="${BUS_Y}" x2="${px}" y2="${BUS_Y}" stroke="#ccc" stroke-width="1.5" stroke-dasharray="6,4"/>`;}
+    else{
+      s+=`<path d="M${ppx},${BUS_Y} Q${mid},${BUS_Y+8} ${px},${BUS_Y}" stroke="${NEW_COL}" stroke-width="2" fill="none" opacity="0.5"/>`;
+      const cb=dominantCable(p.components||{});
+      if(cb!=='—')s+=`<text x="${mid}" y="${BUS_Y+18}" fill="${NEW_COL}" font-size="7" text-anchor="middle" font-family="Arial">${esc(cb)}</text>`;
+      if(p.span)s+=`<text x="${mid}" y="${BUS_Y-10}" fill="#888" font-size="7" text-anchor="middle" font-family="Arial">${p.span}m</text>`;
+    }
+  });
+  // Each pole
+  poles.forEach((p,i)=>{
+    const px=PAD_L+i*COL_W;
+    const c=p.components||{};
+    const isExisting=p.poleType==='existing';
+    const poleCol=isExisting?'#aaa':EST_COL;
+    const dash=isExisting?' stroke-dasharray="5,3"':'';
+    const plX=px-PLATE_W/2;
+    s+=`<rect x="${plX}" y="${PLATE_Y}" width="${PLATE_W}" height="${PLATE_H}" rx="3" fill="#eaf2f8" stroke="${poleCol}" stroke-width="1.2"/>`;
+    s+=`<text x="${px}" y="${PLATE_Y+13}" fill="${EST_COL}" font-size="11" text-anchor="middle" font-weight="700" font-family="Arial">${esc(p.code)}</text>`;
+    if(p.location){const loc2=p.location.length>14?p.location.slice(0,13)+'…':p.location;s+=`<text x="${px}" y="${PLATE_Y+25}" fill="#5a6a7a" font-size="7" text-anchor="middle" font-family="Arial">${esc(loc2)}</text>`;}
+    s+=`<line x1="${px}" y1="${POLE_TOP}" x2="${px}" y2="${POLE_BOT}" stroke="${poleCol}" stroke-width="2.5" stroke-linecap="round"${dash}/>`;
+    if(Object.values(c).some(v=>v>0)){const armLen=22;s+=`<line x1="${px-armLen}" y1="${ARM_Y}" x2="${px+armLen}" y2="${ARM_Y}" stroke="${poleCol}" stroke-width="2.5" stroke-linecap="round"/>`;}
+    s+=`<line x1="${px-8}" y1="${POLE_BOT+3}" x2="${px+8}" y2="${POLE_BOT+3}" stroke="#8a6010" stroke-width="2"/>`;
+    s+=`<line x1="${px-5}" y1="${POLE_BOT+6}" x2="${px+5}" y2="${POLE_BOT+6}" stroke="#8a6010" stroke-width="1.5"/>`;
+    const compEntries=Object.entries(c).filter(e=>e[1]>0);
+    const zoneCount={top:0,arm:0,upper:0,mid:0,stay:0,ground:0,line:0};
+    compEntries.forEach(([cid,cnt])=>{
+      if(cid==='pole'||cid==='cross_arm')return;
+      const zone=ZONE[cid]||'mid',isEst=estIds.has(cid),col=isEst?EST_COL:NEW_COL,idx=zoneCount[zone]++;
+      const lat=(idx===0?0:(idx%2===1?-1:1)*Math.ceil(idx/2)*13);
+      let cx=px+lat,cy;
+      switch(zone){case'top':cy=ARM_Y-16;break;case'arm':cx=px+(idx===0?-9:idx===1?9:0);cy=ARM_Y;break;case'upper':cy=ARM_Y+20;break;case'mid':cy=ARM_Y+48;break;case'stay':cx=px+16;cy=ARM_Y+12;break;case'ground':cx=px+16;cy=POLE_BOT-5;break;case'line':cy=ARM_Y;cx=px-20;break;default:cy=ARM_Y+60;}
+      s+=makeSym(cid,cx,cy,col);
+      if(cnt>1)s+=`<text x="${cx+9}" y="${cy+4}" fill="${col}" font-size="7" font-weight="700" font-family="Arial">×${cnt}</text>`;
+    });
+    let listY=LBL_LIST_Y;
+    compEntries.forEach(([cid,cnt])=>{
+      const isEst=estIds.has(cid),col=isEst?EST_COL:NEW_COL;
+      const label=(S.components.find(cc=>cc.id===cid)?.name||cid).slice(0,14);
+      s+=`<text x="${px-PLATE_W/2+3}" y="${listY}" fill="${col}" font-size="7" font-family="Arial">${esc(label)} ×${cnt}</text>`;
+      listY+=11;
+    });
+  });
+  s+='</svg>';host.innerHTML=s;
+}
+function exportSVG(){
+  const svg=document.getElementById('sld-svg');if(!svg){toast('⚠ Draw SLD first');return;}
+  const blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='SLD_'+today()+'.svg';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('⬇ SVG saved');
+}
+function exportPDF(){
+  const svg=document.getElementById('sld-svg');if(!svg){toast('⚠ Draw SLD first');return;}
+  const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SLD</title><style>body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:14px}h1{font-size:14px;color:#154360;margin-bottom:4px}.wrap{overflow-x:auto;border:1px solid #d5dce4;border-radius:6px;padding:8px}@page{size:A3 landscape;margin:.8cm}</style></head><body><h1>SLD — ${esc(proj)}</h1><div class="wrap">${svg.outerHTML}</div><script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body></html>`;
+  const blob=new Blob([html],{type:'text/html'});const url=URL.createObjectURL(blob);const w=window.open(url,'_blank');
+  if(!w){const a=document.createElement('a');a.href=url;a.download='SLD_'+today()+'.html';a.click();}
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+
+// ═══════════════════════════════════════════
+// MAP PDF DOWNLOAD
+// ═══════════════════════════════════════════
+async function downloadMapPDF(){
+  if(!leafletMap){toast('⚠ Open map first');return;}
+  if(!gpxTracks.length){toast('⚠ Import a GPX track first');return;}
+  toast('⏳ Generating PDF…');
+  await new Promise(r=>setTimeout(r,300));
+  try{
+    const loadScript=(src,globalName)=>new Promise((res,rej)=>{
+      if(window[globalName])return res(window[globalName]);
+      const s=document.createElement('script');s.src=src;
+      s.onload=()=>res(window[globalName]);
+      s.onerror=()=>rej(new Error('Failed to load '+src));
+      document.head.appendChild(s);
+    });
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js','jspdf');
+    const jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+    if(!jsPDFCtor){toast('⚠ PDF lib failed to load');return;}
+
+    const mapEl=document.getElementById('pole-map');
+    const mapRect=mapEl.getBoundingClientRect();
+    const W=Math.round(mapRect.width), H=Math.round(mapRect.height);
+    const DPR=2; // render at 2× for crisp output
+    const zoom=leafletMap.getZoom();
+    const trackColors=['#2e86de','#e74c3c','#8e44ad','#f39c12','#16a085','#2c3e50'];
+
+    // lat/lng → container pixel (the SAME projection the live map uses → perfect alignment)
+    const P=(lat,lng)=>leafletMap.latLngToContainerPoint([lat,lng]);
+
+    // Draws route polylines + waypoint dots + name labels + span labels onto a context.
+    // Mirrors refreshMap() exactly so the PDF matches the on-screen map.
+    function drawVectors(c){
+      if(!gpxTrackVisible)return;
+      gpxTracks.forEach((track,ti)=>{
+        const pts=track.pts; if(!pts.length)return;
+        const tCol=trackColors[ti%trackColors.length];
+        c.lineJoin='round'; c.lineCap='round';
+        // route shadow
+        c.strokeStyle='rgba(0,0,0,0.25)'; c.lineWidth=6; c.beginPath();
+        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
+        c.stroke();
+        // route colour
+        c.strokeStyle=tCol; c.globalAlpha=0.85; c.lineWidth=3; c.beginPath();
+        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
+        c.stroke(); c.globalAlpha=1;
+      });
+      if(zoom<15)return;
+      gpxTracks.forEach((track)=>{
+        const pts=track.pts; if(!pts.length)return;
+        const candidates=[];
+        pts.forEach((pt,i)=>{const nm=(pt.name||'').trim(); if(nm)candidates.push({pt,i,nm});});
+        const maxLabels=zoom>=17?200:zoom>=16?80:30;
+        const lblStep=Math.max(1,Math.ceil(candidates.length/maxLabels));
+        // dots + name labels
+        candidates.forEach((cd,ci)=>{
+          const showLbl=(ci%lblStep===0)||ci===0||ci===candidates.length-1;
+          const p=P(cd.pt.lat,cd.pt.lng);
+          c.beginPath(); c.arc(p.x,p.y,3,0,Math.PI*2);
+          c.fillStyle='#111'; c.globalAlpha=0.85; c.fill();
+          c.globalAlpha=1; c.lineWidth=1; c.strokeStyle='#111'; c.stroke();
+          if(showLbl){
+            c.font='700 11px Arial,Helvetica,sans-serif';
+            c.textBaseline='middle'; c.textAlign='left';
+            c.lineWidth=3; c.strokeStyle='#fff'; c.lineJoin='round';
+            c.strokeText(cd.nm,p.x+7,p.y);
+            c.fillStyle='#111'; c.fillText(cd.nm,p.x+7,p.y);
+          }
+        });
+        // span labels
+        if(zoom>=16){
+          for(let k=1;k<candidates.length;k++){
+            const a=candidates[k-1], b=candidates[k];
+            if(b.i-a.i>5)continue;
+            const segDist=haversine(a.pt.lat,a.pt.lng,b.pt.lat,b.pt.lng);
+            if(segDist<3)continue;
+            const mLat=(a.pt.lat+b.pt.lat)/2, mLng=(a.pt.lng+b.pt.lng)/2;
+            const p=P(mLat,mLng), label=segDist.toFixed(0)+'m';
+            c.font='700 10px Arial,Helvetica,sans-serif';
+            c.textBaseline='middle'; c.textAlign='center';
+            c.lineWidth=3; c.strokeStyle='#fff'; c.lineJoin='round';
+            c.strokeText(label,p.x,p.y);
+            c.fillStyle='#1a1a1a'; c.fillText(label,p.x,p.y);
+          }
+        }
+      });
+    }
+
+    // ── Build the composite canvas: tiles first, then vectors + labels on top ──
+    const cv=document.createElement('canvas');
+    cv.width=W*DPR; cv.height=H*DPR;
+    const ctx=cv.getContext('2d');
+    ctx.scale(DPR,DPR);
+    ctx.fillStyle='#e9e5dc'; ctx.fillRect(0,0,W,H);
+
+    // Composite each loaded tile at its real on-screen position (read from the DOM).
+    const tiles=Array.from(mapEl.querySelectorAll('.leaflet-tile-pane img.leaflet-tile'));
+    tiles.forEach(img=>{
+      try{
+        if(!img.complete||img.naturalWidth===0)return;
+        const r=img.getBoundingClientRect();
+        const op=parseFloat(img.style.opacity||'1');
+        ctx.globalAlpha=isNaN(op)?1:op;
+        ctx.drawImage(img, r.left-mapRect.left, r.top-mapRect.top, r.width, r.height);
+        ctx.globalAlpha=1;
+      }catch(_){}
+    });
+
+    drawVectors(ctx);
+
+    // Export → if a cross-origin tile tainted the canvas, fall back to a clean white render.
+    let imgData;
+    try{
+      imgData=cv.toDataURL('image/jpeg',0.92);
+    }catch(taintErr){
+      const cv2=document.createElement('canvas'); cv2.width=cv.width; cv2.height=cv.height;
+      const c2=cv2.getContext('2d'); c2.scale(DPR,DPR);
+      c2.fillStyle='#ffffff'; c2.fillRect(0,0,W,H);
+      drawVectors(c2);
+      imgData=cv2.toDataURL('image/jpeg',0.92);
+      toast('ℹ Basemap skipped (tile CORS) — route & labels saved','#e67e22');
+    }
+
+    // ── Place onto an A4 page, preserving the on-screen aspect ratio ──
+    const isLandscape=W>H;
+    const pdf=new jsPDFCtor({orientation:isLandscape?'l':'p',unit:'mm',format:'a4'});
+    const pageW=pdf.internal.pageSize.getWidth();
+    const pageH=pdf.internal.pageSize.getHeight();
+    const margin=8, titleH=10;
+    const availW=pageW-margin*2, availH=pageH-margin*2-titleH;
+    const aspect=W/H;
+    let drawW=availW, drawH=availW/aspect;
+    if(drawH>availH){drawH=availH; drawW=availH*aspect;}
+    const x=margin+(availW-drawW)/2, y=margin+titleH+(availH-drawH)/2;
+
+    const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(11);
+    pdf.text('FieldGrid — '+proj,margin,margin+5);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(9);
+    pdf.text(today(),pageW-margin,margin+5,{align:'right'});
+
+    pdf.addImage(imgData,'JPEG',x,y,drawW,drawH,undefined,'FAST');
+    pdf.save('FieldGrid_Map_'+today()+'.pdf');
+    toast('⬇ PDF saved','#00a86b');
+  }catch(e){toast('⚠ '+e.message.slice(0,70));}
+}
+
+// ═══════════════════════════════════════════
+// REPORT
+// ═══════════════════════════════════════════
+function renderReport(){
+  const tot={};S.components.forEach(c=>tot[c.id]=0);
+  S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
+  const span=S.poles.reduce((a,p)=>a+(p.span||0),0);
+  const areas=new Set(S.poles.map(p=>p.location).filter(Boolean));
+  document.getElementById('r-poles').textContent=S.poles.length;
+  document.getElementById('r-span').textContent=span.toFixed(0)+'m';
+  document.getElementById('r-comps').textContent=Object.values(tot).reduce((a,b)=>a+b,0);
+  document.getElementById('r-areas').textContent=areas.size;
+  const bomRows=S.components.filter(c=>tot[c.id]>0||c.est>0).map(c=>{
+    const used=tot[c.id]||0,est=c.est||0;
+    const badge=est===0?'<span class="badge">—</span>':used>est?`<span class="badge ov">+${used-est} OVER</span>`:used<est?`<span class="badge un">${est-used} LEFT</span>`:'<span class="badge ok">✓ EXACT</span>';
+    return`<tr><td>${esc(c.name)}</td><td>${esc(c.unit)}</td><td style="text-align:right">${est||'—'}</td><td style="text-align:right;color:var(--success)">${used}</td><td>${badge}</td></tr>`;
+  }).join('');
+  document.getElementById('bom-tbl').innerHTML=bomRows?`<table><thead><tr><th>Component</th><th>Unit</th><th>Estimate</th><th>Field (Qty)</th><th>Status</th></tr></thead><tbody>${bomRows}</tbody></table>`:'<div class="empty">No component usage</div>';
+  const schRows=S.poles.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.code)}</b></td><td>${esc(p.location||'—')}</td><td>${p.span?p.span+'m':'—'}</td><td style="font-size:9px">${p.lat?p.lat.toFixed(5)+'<br>'+p.lng.toFixed(5):'—'}</td><td>${p.acc?'±'+p.acc.toFixed(1)+'m':'—'}</td></tr>`).join('');
+  document.getElementById('sched-tbl').innerHTML=schRows?`<table><thead><tr><th>#</th><th>Code</th><th>Location</th><th>Span</th><th>GPS</th><th>Acc</th></tr></thead><tbody>${schRows}</tbody></table>`:'<div class="empty">No poles recorded</div>';
+}
+
+// ═══════════════════════════════════════════
+// EXCEL EXPORT — SDS-ready for re-import
+// ═══════════════════════════════════════════
+function autoFitSheet(ws){
+  // Compute max char width per column across all cells
+  const ref=ws['!ref'];if(!ref)return;
+  const range=XLSX.utils.decode_range(ref);
+  const colWidths=[];
+  for(let C=range.s.c;C<=range.e.c;C++){
+    let maxW=8;
+    for(let R=range.s.r;R<=range.e.r;R++){
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(cell&&cell.v!=null){
+        const len=String(cell.v).length;
+        if(len>maxW)maxW=len;
+      }
+    }
+    colWidths.push({wch:Math.min(maxW+2,40)});
+  }
+  ws['!cols']=colWidths;
+}
+function centerSheet(ws){
+  const ref=ws['!ref'];if(!ref)return;
+  const range=XLSX.utils.decode_range(ref);
+  for(let R=range.s.r;R<=range.e.r;R++){
+    for(let C=range.s.c;C<=range.e.c;C++){
+      const addr=XLSX.utils.encode_cell({r:R,c:C});
+      if(!ws[addr])continue;
+      if(!ws[addr].s)ws[addr].s={};
+      ws[addr].s.alignment={horizontal:'center',vertical:'center',wrapText:true};
+    }
+  }
+}
+function expXLSX(){
+  if(!S.poles.length&&!S.components.length){toast('⚠ No data');return;}
+
+  // ── Totals per component across all poles ──
+  const tot={};S.components.forEach(c=>tot[c.id]=0);
+  S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
+
+  // ── Only components actually used (field qty > 0 OR estimate > 0) ──
+  const usedComps=S.components.filter(c=>(tot[c.id]||0)>0||(c.est||0)>0);
+  const usedIds=usedComps.map(c=>c.id);
+  const usedNames=usedComps.map(c=>c.name);
+
+  const wb=XLSX.utils.book_new();
+  const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+  const locations=[...new Set(S.poles.map(p=>p.location).filter(Boolean))];
+  const dateStr=today();
+
+  // ── Style presets matching the reference template ──
+  const FONT12={name:'Calibri',sz:12};
+  const FONT12B={name:'Calibri',sz:12,bold:true};
+  const FONT14B={name:'Calibri',sz:14,bold:true};
+  const ALIGN_C={horizontal:'center',vertical:'center',wrapText:true};
+  const BTHIN={style:'thin',color:{rgb:'000000'}};
+  const BMED={style:'medium',color:{rgb:'000000'}};
+  const borderAll=(t,r,b,l,style)=>{
+    const s=style||BTHIN;
+    return{
+      top:t?s:undefined,
+      right:r?s:undefined,
+      bottom:b?s:undefined,
+      left:l?s:undefined
+    };
+  };
+  // Set every cell in a rectangular range to thin-border all-around + center + font12
+  const styleRangeAsTable=(ws,r0,r1,c0,c1,opts)=>{
+    opts=opts||{};
+    for(let R=r0;R<=r1;R++){
+      for(let C=c0;C<=c1;C++){
+        const addr=XLSX.utils.encode_cell({r:R,c:C});
+        if(!ws[addr])ws[addr]={t:'s',v:''};
+        ws[addr].s={
+          font:(opts.headerRows&&opts.headerRows.includes(R))?FONT12B:FONT12,
+          alignment:ALIGN_C,
+          border:{top:BTHIN,right:BTHIN,bottom:BTHIN,left:BTHIN}
+        };
+      }
+    }
+  };
+
+  // ════════════════════════════════════════
+  // SHEET 1 — SDS (Structural Data Sheet)
+  // ════════════════════════════════════════
+  // Title block rows 1-7 (0-indexed 0..6), gap row 8 (idx 7), table header row 9 (idx 8), then data
+  const sdsRows=[
+    ['NEPAL ELECTRICITY AUTHORITY','','','',''],
+    ['Distribution and Consumer Services Directorate','','','',''],
+    ['Lumbini Provincial Office, Butwal','','','',''],
+    ['Taulihawa Distribution Center','','','',''],
+    ['FY: 2081/82','','','',''],
+    ['Works At: '+locations.join(', '),'','','',''],
+    ['STRUCTURAL DATA SHEET (SDS)','','','',''],
+    ['','','','',''],
+    ['S.N.','Description of Item','Unit','Qty (Field)','Est. Qty'],
+    ...usedComps.map((c,i)=>[i+1,c.name,c.unit,tot[c.id]||0,c.est||0])
+  ];
+  const sdsWs=XLSX.utils.aoa_to_sheet(sdsRows);
+  // Merge title rows across 5 cols (A:E)
+  sdsWs['!merges']=[];
+  for(let r=0;r<7;r++)sdsWs['!merges'].push({s:{r,c:0},e:{r,c:4}});
+  // Column widths matching reference exactly (subtract 0.875 padding xlsx adds)
+  sdsWs['!cols']=[{wch:6},{wch:36},{wch:8},{wch:14},{wch:10}];
+  // Row heights matching reference
+  sdsWs['!rows']=[{hpt:18.75},{},{},{},{},{},{},{hpt:16.5}];
+
+  // Style title block A1:E7 — bold for row 1, 6, 7; regular for 2-5; MEDIUM outer border
+  const sdsTitleStyle=(R,bold,sz)=>{
+    for(let C=0;C<=4;C++){
+      const addr=XLSX.utils.encode_cell({r:R,c:C});
+      if(!sdsWs[addr])sdsWs[addr]={t:'s',v:''};
+      sdsWs[addr].s={
+        font:{name:'Calibri',sz:sz||12,bold:!!bold},
+        alignment:ALIGN_C,
+        border:{
+          top:R===0?BMED:undefined,
+          left:C===0?BMED:undefined,
+          right:C===4?BMED:undefined,
+          bottom:undefined
+        }
+      };
+    }
+  };
+  sdsTitleStyle(0,true,14);
+  sdsTitleStyle(1,false,12);
+  sdsTitleStyle(2,false,12);
+  sdsTitleStyle(3,false,12);
+  sdsTitleStyle(4,false,12);
+  sdsTitleStyle(5,true,12);
+  sdsTitleStyle(6,true,12);
+  // Row 8 (gap row index 7): closes the medium box with bottom border + left/right medium
+  for(let C=0;C<=4;C++){
+    const addr=XLSX.utils.encode_cell({r:7,c:C});
+    if(!sdsWs[addr])sdsWs[addr]={t:'s',v:''};
+    sdsWs[addr].s={
+      font:FONT12,alignment:ALIGN_C,
+      border:{
+        bottom:BMED,
+        left:C===0?BMED:undefined,
+        right:C===4?BMED:undefined
+      }
+    };
+  }
+  // Table area A9 (row idx 8) onwards: thin borders, center, bold header row only
+  styleRangeAsTable(sdsWs,8,sdsRows.length-1,0,4,{headerRows:[8]});
+  XLSX.utils.book_append_sheet(wb,sdsWs,'SDS');
+
+  // ════════════════════════════════════════
+  // SHEET 2 — Pole Schedule (core data)
+  // ════════════════════════════════════════
+  const schHdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...usedNames];
+  const schData=S.poles.map((p,i)=>[
+    i+1,
+    p.code,
+    p.location||'',
+    p.lat!=null?+p.lat.toFixed(6):'',
+    p.lng!=null?+p.lng.toFixed(6):'',
+    p.span||'',
+    i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',
+    p.remarks||'',
+    p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',
+    ...usedIds.map(id=>p.components?.[id]||0)
+  ]);
+  // Drop component columns where every pole has 0
+  const compColsToKeep=usedIds.map((id,ci)=>schData.some(row=>row[9+ci]>0)?ci:null).filter(ci=>ci!==null);
+  const filteredHdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...compColsToKeep.map(ci=>usedNames[ci])];
+  const filteredData=schData.map(row=>[...row.slice(0,9),...compColsToKeep.map(ci=>row[9+ci])]);
+  const schWs=XLSX.utils.aoa_to_sheet([filteredHdr,...filteredData]);
+  const schCols=[{wch:5},{wch:12},{wch:22},{wch:13},{wch:13},{wch:9},{wch:14},{wch:22},{wch:17},...compColsToKeep.map(()=>({wch:18}))];
+  schWs['!cols']=schCols;
+  styleRangeAsTable(schWs,0,filteredData.length,0,filteredHdr.length-1,{headerRows:[0]});
+  XLSX.utils.book_append_sheet(wb,schWs,'Pole Schedule');
+
+  // ════════════════════════════════════════
+  // SHEET 3 — BOM (Bill of Materials)
+  // ════════════════════════════════════════
+  const bomData=usedComps.map((c,i)=>{
+    const used=tot[c.id]||0,est=c.est||0,diff=used-est;
+    return[i+1,c.name,c.unit,est||'—',used,diff===0&&est>0?0:diff,used>est?'OVER':used<est&&est>0?'UNDER':used===est&&est>0?'EXACT':'—'];
+  });
+  const totalUsed=usedComps.reduce((a,c)=>a+(tot[c.id]||0),0);
+  const totalEst=usedComps.reduce((a,c)=>a+(c.est||0),0);
+  // Layout: row1 title, row2 date, row3 gap, row4 headers, rows5..N data, gap row, TOTAL row
+  const bomFlat=[
+    ['BILL OF MATERIALS — '+proj,'','','','','',''],
+    ['Date: '+dateStr,'','','','','',''],
+    ['','','','','','',''],
+    ['SN','Component','Unit','Est. Qty','Field Qty','Difference','Status'],
+    ...bomData,
+    ['','','','','','',''],
+    ['','TOTAL','',totalEst,totalUsed,totalUsed-totalEst,'']
+  ];
+  const bomWs=XLSX.utils.aoa_to_sheet(bomFlat);
+  bomWs['!cols']=[{wch:7},{wch:36},{wch:8},{wch:10},{wch:10},{wch:12},{wch:10}];
+  bomWs['!merges']=[{s:{r:0,c:0},e:{r:0,c:6}},{s:{r:1,c:0},e:{r:1,c:6}}];
+  // Style all cells thin-bordered + centered (matches reference)
+  const bomLastRow=bomFlat.length-1;
+  for(let R=0;R<=bomLastRow;R++){
+    for(let C=0;C<=6;C++){
+      const addr=XLSX.utils.encode_cell({r:R,c:C});
+      if(!bomWs[addr])bomWs[addr]={t:'s',v:''};
+      const isHeaderRow=(R===0||R===3||R===bomLastRow);
+      bomWs[addr].s={
+        font:isHeaderRow?FONT12B:FONT12,
+        alignment:ALIGN_C,
+        border:{top:BTHIN,right:BTHIN,bottom:BTHIN,left:BTHIN}
+      };
+    }
+  }
+  XLSX.utils.book_append_sheet(wb,bomWs,'BOM');
+
+  XLSX.writeFile(wb,'FieldGrid_'+proj.replace(/[^a-z0-9]/gi,'_')+'_'+dateStr+'.xlsx');
+  toast('⬇ Excel exported','#00a86b');
+}
+
+function downloadProjectBackup(){
+  // Complete, re-importable JSON snapshot of the running project.
+  const projName=getProjs().find(p=>p.id===CUR)?.name||'Project';
+  const backup={
+    _format:'FieldGrid-backup',_version:1,
+    exportedAt:new Date().toISOString(),
+    projectId:CUR,projectName:projName,
+    poles:S.poles,components:S.components,locations:S.locations,
+    counters:S.counters,cableConnect:S.cableConnect,
+    gpxTracks:(typeof gpxTracks!=='undefined'?gpxTracks:[])
+  };
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='FieldGrid_Backup_'+projName.replace(/[^a-z0-9]/gi,'_')+'_'+today()+'.json';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  toast('⬇ Backup saved','#1e8449');
+}
+function restoreProjectBackup(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  inp.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const b=JSON.parse(ev.target.result);
+        if(b._format!=='FieldGrid-backup')throw new Error('Not a FieldGrid backup file');
+        S.poles=Array.isArray(b.poles)?b.poles:[];
+        S.components=Array.isArray(b.components)?b.components:[];
+        S.locations=Array.isArray(b.locations)?b.locations:[];
+        S.counters=b.counters||{};
+        S.cableConnect=b.cableConnect??null;
+        pSet('poles',S.poles);pSet('components',S.components);pSet('locations',S.locations);
+        if(typeof gpxTracks!=='undefined'){gpxTracks=Array.isArray(b.gpxTracks)?b.gpxTracks:[];try{saveGpxState();}catch(_){}}
+        renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();
+        if(typeof updateGPXUI==='function')try{updateGPXUI();}catch(_){}
+        if(mapInitialised)refreshMap();
+        if(document.getElementById('bom-tbl'))renderReport();
+        toast('✅ Backup restored: '+(b.projectName||'project'),'#1e8449');
+      }catch(err){toast('⚠ '+err.message.slice(0,60),'#e74c3c');}
+    };
+    rd.readAsText(file);
+  };
+  inp.click();
+}
+function clearProject(){
+  const projName=getProjs().find(p=>p.id===CUR)?.name||'this project';
+  const hasData=S.poles.length||S.components.length||S.locations.length||(typeof gpxTracks!=='undefined'&&gpxTracks.length);
+  if(!hasData){toast('Nothing to clear — project is already empty');return;}
+
+  // STEP 1 — strongly encourage a backup download first.
+  const wantBackup=confirm('Before clearing "'+projName+'", download a backup?\n\nThe backup is a single .json file that restores EVERYTHING later (poles, GPS, components, locations, GPX tracks).\n\n• OK = download backup now\n• Cancel = skip backup');
+  if(wantBackup){
+    downloadProjectBackup();
+  }
+
+  // STEP 2 — final confirmation to delete.
+  const ok=confirm('Clear ALL data for "'+projName+'" now?\n\nThis permanently deletes every recorded pole, all components, locations, counters and loaded GPX tracks for this project.\n\nYou can reopen the project later only from a backup file.\n\nProceed?');
+  if(!ok)return;
+
+  // Wipe ALL project storage keys
+  try{Object.keys(localStorage).filter(k=>k.startsWith('fg_p_'+CUR+'_')).forEach(k=>localStorage.removeItem(k));}catch(e){}
+  // Wipe in-memory state (start completely empty)
+  S.poles=[];S.components=[];S.locations=[];S.counters={};S.cableConnect=null;
+  // Wipe GPX tracks
+  if(typeof gpxTracks!=='undefined'){gpxTracks=[];gpxTrackVisible=true;}
+  gpxTrack=null;
+  try{if(typeof saveGpxState==='function')saveGpxState();}catch(e){}
+  if(typeof gpxTrackLayer!=='undefined'&&gpxTrackLayer&&leafletMap){leafletMap.removeLayer(gpxTrackLayer);gpxTrackLayer=null;}
+  // Clear record form
+  const codeEl=document.getElementById('inp-code');if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
+  const spanEl=document.getElementById('inp-span');if(spanEl)spanEl.value='';
+  const remEl=document.getElementById('inp-rem');if(remEl)remEl.value='';
+  const locEl=document.getElementById('inp-loc');if(locEl)locEl.value='';
+  setUpz('📂','Tap to upload SDS estimate file','Excel (.xlsx) · Row 6 = locations');
+  const st=document.getElementById('parse-st');if(st){st.className='sbar';st.innerHTML='';}
+  // GPX UI reset
+  try{if(typeof updateGPXUI==='function')updateGPXUI();}catch(e){}
+  ['gpx-show-btn','snap-all-btn','gpx-clear-btn','gpx-sync-btn'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display='none';});
+  renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();if(mapInitialised)refreshMap();
+  if(document.getElementById('bom-tbl'))renderReport();
+  cancelEdit();toast('🗑 "'+projName+'" cleared','#1e8449');
+}
+function renderAll(){renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+async function init(){
+  await authCheck();
+  initProjects();
+  if(getProjs().length){loadState();renderAll();}
+  const wire=(id,fn)=>{const el=document.getElementById(id);if(el){el.addEventListener('click',fn);}};
+  // (Clear and Fit-All buttons use inline onclick in the HTML so they work even if any
+  //  earlier init step throws — addEventListener wiring here is intentionally not used.)
+  document.getElementById('inp-code')?.addEventListener('input',function(){this.dataset.autoFilled='0';});
+  document.getElementById('new-proj-name')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();createProject();}if(e.key==='Escape')toggleNewProj();});
+}
+init();
+</script>
+<script>
+/* ── PWA: inline web-app manifest (keeps the app a single HTML file) ── */
+(function(){
+  try{
+    var icon='data:image/svg+xml,'+encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'+
+      '<rect width="512" height="512" rx="96" fill="#154360"/>'+
+      '<g fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round">'+
+      '<path d="M120 150 V362 M256 120 V392 M392 150 V362"/>'+
+      '<path d="M96 200 H416 M96 312 H416"/></g>'+
+      '<circle cx="256" cy="256" r="30" fill="#2ecc71"/></svg>');
+    var manifest={
+      name:'FieldGrid Pro',short_name:'FieldGrid',
+      description:'Offline pole survey & SDS field tool',
+      start_url:'.',scope:'.',display:'standalone',orientation:'any',
+      background_color:'#f4f6f8',theme_color:'#154360',
+      icons:[
+        {src:icon,sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'},
+        {src:icon,sizes:'512x512',type:'image/svg+xml',purpose:'any maskable'}
+      ]
+    };
+    var blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
+    var link=document.createElement('link');
+    link.rel='manifest';link.href=URL.createObjectURL(blob);
+    document.head.appendChild(link);
+    var ai=document.createElement('link');
+    ai.rel='apple-touch-icon';ai.href=icon;document.head.appendChild(ai);
+  }catch(e){}
+})();
+
+/* ── PWA: register the service worker for offline use ── */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      // If a new version is waiting, activate it on next load automatically.
+      if(reg.waiting)reg.waiting.postMessage('SKIP_WAITING');
+      reg.addEventListener('updatefound',function(){
+        var nw=reg.installing;
+        if(nw)nw.addEventListener('statechange',function(){
+          if(nw.state==='installed'&&navigator.serviceWorker.controller){
+            nw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    }).catch(function(err){
+      // Service workers need https:// or localhost. On file:// this is expected to fail.
+      console.warn('FieldGrid: service worker not registered —',err&&err.message);
+    });
+    var reloading=false;
+    navigator.serviceWorker.addEventListener('controllerchange',function(){
+      if(reloading)return;reloading=true;window.location.reload();
+    });
+  });
+}
+</script>
+</body>
+</html>
