@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,user-scalable=yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FieldGrid">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#154360">
 <title>FieldGrid Pro v7</title>
 <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -2319,6 +2323,61 @@ async function init(){
   document.getElementById('new-proj-name')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();createProject();}if(e.key==='Escape')toggleNewProj();});
 }
 init();
+</script>
+<script>
+/* ── PWA: inline web-app manifest (keeps the app a single HTML file) ── */
+(function(){
+  try{
+    var icon='data:image/svg+xml,'+encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'+
+      '<rect width="512" height="512" rx="96" fill="#154360"/>'+
+      '<g fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round">'+
+      '<path d="M120 150 V362 M256 120 V392 M392 150 V362"/>'+
+      '<path d="M96 200 H416 M96 312 H416"/></g>'+
+      '<circle cx="256" cy="256" r="30" fill="#2ecc71"/></svg>');
+    var manifest={
+      name:'FieldGrid Pro',short_name:'FieldGrid',
+      description:'Offline pole survey & SDS field tool',
+      start_url:'.',scope:'.',display:'standalone',orientation:'any',
+      background_color:'#f4f6f8',theme_color:'#154360',
+      icons:[
+        {src:icon,sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'},
+        {src:icon,sizes:'512x512',type:'image/svg+xml',purpose:'any maskable'}
+      ]
+    };
+    var blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
+    var link=document.createElement('link');
+    link.rel='manifest';link.href=URL.createObjectURL(blob);
+    document.head.appendChild(link);
+    var ai=document.createElement('link');
+    ai.rel='apple-touch-icon';ai.href=icon;document.head.appendChild(ai);
+  }catch(e){}
+})();
+
+/* ── PWA: register the service worker for offline use ── */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      // If a new version is waiting, activate it on next load automatically.
+      if(reg.waiting)reg.waiting.postMessage('SKIP_WAITING');
+      reg.addEventListener('updatefound',function(){
+        var nw=reg.installing;
+        if(nw)nw.addEventListener('statechange',function(){
+          if(nw.state==='installed'&&navigator.serviceWorker.controller){
+            nw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    }).catch(function(err){
+      // Service workers need https:// or localhost. On file:// this is expected to fail.
+      console.warn('FieldGrid: service worker not registered —',err&&err.message);
+    });
+    var reloading=false;
+    navigator.serviceWorker.addEventListener('controllerchange',function(){
+      if(reloading)return;reloading=true;window.location.reload();
+    });
+  });
+}
 </script>
 </body>
 </html>
