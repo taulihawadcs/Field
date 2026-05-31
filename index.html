@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="FieldGrid">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#154360">
-<title>FieldGrid Pro v7</title>
+<title>FieldGrid Pro v22</title>
 <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
@@ -350,7 +350,7 @@ td b{color:var(--primary)}
       <span id="pole-code-suggest" style="font-size:9px;color:var(--text3);font-weight:400;text-transform:none;margin-left:6px"></span>
     </label>
     <input id="inp-code" placeholder="e.g. wpt001" style="font-weight:700;font-size:14px;color:var(--primary);border-color:var(--primary)" autocomplete="off" autocorrect="off" spellcheck="false">
-    <div style="font-size:10px;color:var(--text3);margin-top:3px">Span is taken automatically from the matched GPX waypoint — no need to enter it here.</div>
+    <div style="font-size:10px;color:var(--text3);margin-top:3px">Span is filled automatically from the matched GPX waypoint — no need to enter it here.</div>
   </div>
 
   <label class="lbl">Location / Area</label>
@@ -369,7 +369,10 @@ td b{color:var(--primary)}
 
   <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:7px">
     <label class="lbl" style="margin:0">Components at this pole</label>
-    <button class="btn bo sm" onclick="resetCtrs()">↻ Reset</button>
+    <div style="display:flex;gap:5px">
+      <button class="btn bo sm" id="copy-last-comps-btn" onclick="copyLastPoleComps()" title="Copy components from the most recent pole entry" style="font-size:11px;color:#b7950b;border-color:#f0d080;display:none"><i class="fa fa-clone"></i> Copy prev</button>
+      <button class="btn bo sm" onclick="resetCtrs()">↻ Reset</button>
+    </div>
   </div>
   <div id="ctr-list"></div>
 
@@ -625,7 +628,8 @@ function deleteProj(id){const p=getProjs().find(x=>x.id===id);if(!confirm('Delet
 const S={poles:[],components:[],locations:[],counters:{},gps:null,gpsLocked:false,cableConnect:null};
 function loadState(){
   S.poles=pGet('poles',[]);
-  S.components=pGet('components',JSON.parse(JSON.stringify(DEF_COMPS)));
+  // New projects start with no preset components — the user adds them, or imports an SDS/BOM.
+  S.components=pGet('components',[]);
   S.locations=pGet('locations',[]);
   S.counters={};S.components.forEach(c=>S.counters[c.id]=0);
   S.gpsLocked=false;S.cableConnect=null;
@@ -887,23 +891,40 @@ function importFromExcel(){
         const wb=XLSX.read(ev.target.result,{type:'array'});
         let comps=[],locs=[];
 
-        // ── Components: ONLY from BOM sheet ──
+        // ── Components: from SDS sheet (BOM is now merged into SDS) ──
+        const sdsSN=wb.SheetNames.find(n=>/^sds$|structural.?data/i.test(n));
         const bomSN=wb.SheetNames.find(n=>/^bom$|bill.?of.?mat/i.test(n));
-        if(!bomSN){
-          toast('⚠ No BOM sheet found. File must contain a "BOM" sheet.','#e74c3c');
+        const srcSN=sdsSN||bomSN;
+        if(!srcSN){
+          toast('⚠ No SDS/BOM sheet found. Export from FieldGrid first.','#e74c3c');
           const st=document.getElementById('parse-st');
           st.className='sbar err sh';
-          st.innerHTML='⚠ BOM sheet not found. Export from FieldGrid first, then re-import.';
+          st.innerHTML='⚠ SDS sheet not found. Export from FieldGrid first, then re-import.';
           return;
         }
-        const bws=wb.Sheets[bomSN];
+        const bws=wb.Sheets[srcSN];
         const braw=XLSX.utils.sheet_to_json(bws,{header:1,defval:''});
+        // Find header row: look for Description + Unit + Est. Qty columns
+        let descCol=1, unitCol=2, estCol=3, dataStart=9;
+        for(let ri=0;ri<braw.length;ri++){
+          const r=braw[ri];
+          const joined=r.map(x=>String(x||'').toLowerCase()).join('|');
+          if(/description|item|particulars/.test(joined)&&/unit/.test(joined)){
+            descCol=r.findIndex(x=>/description|item|particulars/i.test(x));
+            unitCol=r.findIndex(x=>/unit/i.test(x));
+            // prefer "Est. Qty" column; fallback to any qty column
+            estCol=r.findIndex(x=>/est.*qty|estimate/i.test(x));
+            if(estCol<0)estCol=r.findIndex(x=>/qty|quantity/i.test(x));
+            if(descCol<0)descCol=1;if(unitCol<0)unitCol=2;if(estCol<0)estCol=3;
+            dataStart=ri+1; break;
+          }
+        }
         braw.forEach((row,i)=>{
-          if(i===0)return; // skip header
-          const name=String(row[0]||'').trim();
-          const unit=String(row[1]||'nos').trim();
-          const est=parseFloat(row[2]);  // Estimated Qty is col 2
-          if(name&&name.length>2&&!/^(component|name|description|sn|#|item)/i.test(name)){
+          if(i<dataStart)return;
+          const name=String(row[descCol]||'').trim();
+          const unit=String(row[unitCol]||'nos').trim();
+          const est=parseFloat(row[estCol]);
+          if(name&&name.length>2&&!/^(total|grand|sub.?total|component|name|description|sn|#|item)/i.test(name)){
             const id='imp_'+name.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40);
             if(!comps.find(c=>c.id===id))
               comps.push({id,name,unit:unit||'nos',cat:'imported',est:isNaN(est)?0:est});
@@ -947,14 +968,14 @@ function renderComps(){
     </div>`
   ).join('')||'<div class="empty">No components — upload estimate file or add manually</div>';
 }
-function addComp(){S.components.push({id:'c_'+genId(),name:'New component',unit:'nos',cat:'custom',est:0});pSet('components',S.components);renderComps();}
+function addComp(){S.components.push({id:'c_'+genId(),name:'',unit:'',cat:'custom',est:0});pSet('components',S.components);renderComps();}
 function renderLocs(){
   document.getElementById('lc-cnt').textContent=S.locations.length;
   document.getElementById('loc-list').innerHTML=S.locations.map((l,i)=>
     `<div class="er"><input value="${esc(l)}" oninput="S.locations[${i}]=this.value;pSet('locations',S.locations)" placeholder="Area / village"><button class="x" onclick="S.locations.splice(${i},1);pSet('locations',S.locations);renderLocs()">×</button></div>`
   ).join('')||'<div class="empty">No locations — upload estimate file or add manually</div>';
 }
-function addLoc(){S.locations.push('New location');pSet('locations',S.locations);renderLocs();}
+function addLoc(){S.locations.push('');pSet('locations',S.locations);renderLocs();}
 function syncLocDrop(){const sel=document.getElementById('inp-loc'),cur=sel.value;sel.innerHTML='<option value="">— select location —</option>'+S.locations.map(l=>`<option value="${esc(l)}"${l===cur?' selected':''}>${esc(l)}</option>`).join('');}
 
 function onLocationChange(){
@@ -995,9 +1016,22 @@ function setCable(v){S.cableConnect=v;document.getElementById('cable-prompt').cl
 // ═══════════════════════════════════════════
 // COUNTERS
 // ═══════════════════════════════════════════
+// Copy components from the most recently recorded pole into the current counters
+function copyLastPoleComps(){
+  if(!S.poles.length){toast('⚠ No poles recorded yet');return;}
+  const last=S.poles[S.poles.length-1];
+  S.counters={};
+  S.components.forEach(c=>S.counters[c.id]=0);
+  Object.entries(last.components||{}).forEach(([id,v])=>{if(S.counters[id]!==undefined)S.counters[id]=v;});
+  renderCtrs();
+  toast('📋 Components copied from '+last.code,'#154360');
+}
 function renderCtrs(){
   document.getElementById('rec-proj').textContent=getProjs().find(p=>p.id===CUR)?.name||'';
   updatePoleCodeDisplay();
+  // Show/hide "Copy prev" button based on whether there are any recorded poles
+  const cpBtn=document.getElementById('copy-last-comps-btn');
+  if(cpBtn)cpBtn.style.display=S.poles.length?'':'none';
   document.getElementById('ctr-list').innerHTML=S.components.map(c=>{
     const v=S.counters[c.id]||0,isEst=c.est>0;
     return `<div class="cc${v>0?' hv':''}" id="cc-${c.id}">
@@ -1073,8 +1107,8 @@ function savePole(){
     const cp=document.getElementById('cable-prompt');if(cp){cp.classList.add('sh');cp.scrollIntoView({behavior:'smooth',block:'center'});}
     return;
   }
-  // Span is NOT entered manually anymore — it is filled in automatically when the pole
-  // is matched to its GPX waypoint (within the same location). New poles start with null.
+  // Span is NOT entered manually — it is filled automatically when the pole
+  // is matched to its GPX waypoint. New poles start with null span.
   let span=null;
   const pole={
     id:genId(),code,location:loc,span,
@@ -1224,6 +1258,20 @@ function cancelEdit(){editingPoleId=null;document.getElementById('edit-panel').c
 // ═══════════════════════════════════════════
 // POLE LIST
 // ═══════════════════════════════════════════
+// Copy previous pole's components to the current counters (new entry only)
+function copyPrevPoleComps(poleId){
+  const pole=S.poles.find(p=>p.id===poleId);
+  if(!pole){toast('⚠ Pole not found');return;}
+  // Copy components from that pole into current counters
+  S.counters={};
+  S.components.forEach(c=>S.counters[c.id]=0);
+  Object.entries(pole.components||{}).forEach(([id,v])=>{if(S.counters[id]!==undefined)S.counters[id]=v;});
+  renderCtrs();
+  toast('📋 Components copied from '+pole.code+' — adjust if needed then Save Pole','#154360');
+  // Scroll to top of record form
+  document.getElementById('main-content').scrollTo({top:0,behavior:'smooth'});
+}
+
 function renderPoleList(){
   document.getElementById('pole-cnt').textContent=S.poles.length;
   document.getElementById('pole-list').innerHTML=[...S.poles].reverse().map(p=>{
@@ -1241,6 +1289,7 @@ function renderPoleList(){
         ${p.photo?'<br><img src="'+p.photo+'" style="margin-top:4px;max-width:64px;max-height:64px;border-radius:4px;border:1px solid var(--border)">':''}
       </div>
       <div class="pra">
+        <button class="ex" title="Copy components to new pole" onclick="copyPrevPoleComps('${p.id}')" style="font-size:12px;padding:3px 7px;border-color:#f0d080;color:#b7950b" title="Use same components for next pole"><i class="fa fa-copy"></i></button>
         <button class="ex" onclick="startEditPole('${p.id}')"><i class="fa fa-pen"></i></button>
         <button class="dx" onclick="delPole('${p.id}')">×</button>
       </div>
@@ -1358,8 +1407,8 @@ function onMapClick(e){
   const pole=S.poles.find(p=>p.id===pinPoleTarget);if(!pole){cancelPinMode();return;}
   pole.lat=+e.latlng.lat.toFixed(7);pole.lng=+e.latlng.lng.toFixed(7);pole.pinnedManually=true;
   const idx=S.poles.indexOf(pole);
-  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
-  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
   pSet('poles',S.poles);toast('📍 '+pinPoleCode+' pinned','#00a86b');if(navigator.vibrate)navigator.vibrate(40);
   pinPoleTarget=null;pinPoleCode=null;document.getElementById('pole-map').style.cursor='';
   refreshMap();renderPoleList();
@@ -1417,29 +1466,59 @@ function locAlmostMatches(a,b){
 
 // Bind a GPX track to a single recorded location, then fill GPS into that location's poles.
 // This prevents a wpt001 at location B from overwriting wpt001 at location A.
-function autoLinkTrackToPoles(pts){
+// When GPX tracks are added, replaced, removed or cleared, the record page's
+// span/lat/lng must reflect the CURRENT set of tracks — not stale data from a
+// removed file. This pass:
+//   1. Clears lat/lng/span from every pole that was previously sourced from a GPX
+//      file (i.e. gpsSource==='gpx'), so removed files no longer leave ghost data.
+//   2. Replays autoLinkTrackToPoles for every current track, so still-present
+//      tracks repopulate their matching location's poles.
+// Manual pin/snap data (gpsSource!=='gpx') is preserved.
+function relinkAllPolesFromGPX(){
+  S.poles.forEach(p=>{
+    if(p.gpsSource==='gpx'){
+      p.lat=null; p.lng=null; p.acc=null; p.span=null;
+      delete p.gpxFile;
+      // gpsSource stays 'gpx' as a hint that it was previously gpx-sourced
+    }
+  });
+  // Also clear stale spans that depended on a removed neighbour's GPS.
+  // (autoLinkTrackToPoles will recompute spans where both neighbours are present.)
+  S.poles.forEach(p=>{if(p.gpsSource==='gpx'&&!p.lat)p.span=null;});
+  // Replay every still-present track.
+  (gpxTracks||[]).forEach(t=>autoLinkTrackToPoles(t.pts,t.name));
+  pSet('poles',S.poles);
+  // UI surfaces that show pole data:
+  if(document.getElementById('pole-list'))renderPoleList();
+  if(document.getElementById('bom-tbl'))renderReport();
+}
+
+// Locate the recorded location (in S.locations) that EXACTLY matches a GPX file's
+// base name (case- and whitespace-insensitive). Returns the canonical location string
+// from S.locations, or null if no recorded location matches.
+function locationForGpxName(gpxName){
+  if(!gpxName)return null;
+  const norm=s=>String(s||'').trim().toLowerCase().replace(/[^a-z0-9\u0900-\u097f]+/g,'');
+  const target=norm(gpxName);
+  if(!target)return null;
+  // Locations dropdown is the source of truth for valid location strings.
+  for(const loc of S.locations){if(norm(loc)===target)return loc;}
+  // Also accept any location actually used by recorded poles (in case a pole's
+  // location string isn't in the dropdown).
+  for(const p of S.poles){const loc=p.location||'';if(norm(loc)===target)return loc;}
+  return null;
+}
+
+function autoLinkTrackToPoles(pts,trackName){
+  // STRICT MODE: this track can only fill in poles whose location string exactly
+  // matches the GPX file name (case/spacing-insensitive). If the filename doesn't
+  // correspond to any recorded location, no pole is touched — the track still
+  // displays on the map, but its waypoint data won't leak into a different
+  // location's records.
+  const boundLoc=locationForGpxName(trackName);
+  if(!boundLoc)return;
   const named=pts.filter(p=>p.name&&p.name.trim());
   if(!named.length||!S.poles.length)return;
-
-  // Candidate locations = locations that have at least one UNMATCHED pole whose code
-  // equals one of this track's waypoint names.
-  const trackCodes=new Set(named.map(p=>p.name.trim()));
-  const locScore={}; // location -> how many of this track's codes it can still supply
-  S.poles.forEach(p=>{
-    if(p.lat&&p.lng)return;                 // already matched/positioned
-    if(!trackCodes.has(p.code))return;
-    const loc=p.location||'';
-    locScore[loc]=(locScore[loc]||0)+1;
-  });
-  const locs=Object.keys(locScore);
-  if(!locs.length)return;                   // nothing left to fill
-
-  // Pick the location that can satisfy the most of this track's codes.
-  // Ties broken by the longest matching run from the track's first waypoint.
-  let boundLoc=locs[0];
-  locs.forEach(l=>{if(locScore[l]>locScore[boundLoc])boundLoc=l;});
-
-  // Within the bound location, match each waypoint name to its (still unmatched) pole.
   named.forEach(pt=>{
     const code=pt.name.trim();
     const pole=S.poles.find(p=>p.code===code && (p.location||'')===boundLoc && (!p.lat||!p.lng));
@@ -1447,6 +1526,7 @@ function autoLinkTrackToPoles(pts){
     pole.lat=+pt.lat.toFixed(7);
     pole.lng=+pt.lng.toFixed(7);
     pole.gpsSource='gpx';
+    pole.gpxFile=trackName;                  // remember which GPX filled this pole
     const idx=S.poles.indexOf(pole);
     if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
     if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
@@ -1477,10 +1557,27 @@ function refreshMap(){
       mn.bindPopup(`<b style="color:${tCol}">📡 ${esc(track.name)}</b><br>${pts.length} pts · ${(computeTrackLength(pts)/1000).toFixed(2)}km`);
       mapOverlayLayers.push(sh,mn);
 
-      // ── PASS 1: Auto-link this track's named waypoints to recorded poles. ──
-      // Codes like wpt001 can repeat across different locations, so we bind the whole
-      // track to ONE location first, then only match waypoints to poles in that location.
-      autoLinkTrackToPoles(pts);
+      // ── Location name label below the track midpoint ──
+      // Shows the GPX file's base name (= matched location) in small readable text
+      // below the route line — does not overlap waypoint labels or span numbers.
+      if(pts.length>1){
+        const midIdx=Math.floor(pts.length/2);
+        const midPt=pts[midIdx];
+        // Place label slightly south of the midpoint to sit below the route line
+        const OFFSET_DEG=0.00015; // ~15m south offset to clear the line itself
+        const locLabel=locationForGpxName(track.name)||track.name;
+        const nameLbl=L.tooltip({
+          permanent:true,direction:'bottom',offset:[0,6],
+          className:'fg-perm-lbl',interactive:false,opacity:1
+        }).setLatLng([midPt.lat-OFFSET_DEG,midPt.lng])
+          .setContent(`<span style="font-size:9px;font-weight:700;color:${tCol};text-shadow:0 0 3px #fff,0 0 3px #fff,1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;letter-spacing:.3px">${esc(locLabel)}</span>`).addTo(leafletMap);
+        mapOverlayLayers.push(nameLbl);
+      }
+
+      // ── PASS 1: Fill in this track's poles, but ONLY if its file name exactly
+      // matches a recorded location (case/whitespace-insensitive). Pass the track name
+      // so the matcher can do the strict filename-vs-location check.
+      autoLinkTrackToPoles(pts, track.name);
 
       // ── PASS 2: Render dots/labels only if zoomed in enough; otherwise just the polyline ──
       // Below z=15 the map is too zoomed out for any GPX dot/label without clutter.
@@ -1671,8 +1768,11 @@ function parseGPXFile(text,fileName){
       pts.push({lat,lng,ele,time,name,idx:i});
     }
   });
-  const trackName=xml.querySelector('trk>name,rte>name')?.textContent||fileName.replace(/\.gpx$/i,'').replace(/_/g,' ');
-  return{name:trackName,pts};
+  // IMPORTANT: the track's matchable identity is the FILE NAME (without extension),
+  // not the inner <trk><name>. This is what the user types and renames on the file
+  // system to mirror the recorded location.
+  const baseName=fileName.replace(/\.[^.]+$/,'');           // strip any extension
+  return{name:baseName,fileName:fileName,pts};
 }
 
 function importGPXFiles(files){
@@ -1692,6 +1792,7 @@ function importGPXFiles(files){
       if(loaded+errors.length===files.length){
         saveGpxState();
         updateGPXUI();
+        relinkAllPolesFromGPX();          // re-sync pole spans/lat/lng with current track set
         if(!mapInitialised)initMap();
         refreshMap();
         // Auto-fit to all track bounds
@@ -1734,7 +1835,9 @@ function updateGPXUI(){
 }
 
 function removeGPXTrack(i){
-  gpxTracks.splice(i,1);saveGpxState();updateGPXUI();refreshMap();
+  gpxTracks.splice(i,1);saveGpxState();updateGPXUI();
+  relinkAllPolesFromGPX();              // drop pole data tied to this removed file
+  refreshMap();
   toast('Track removed');
 }
 function computeTrackLength(pts){let d=0;for(let i=1;i<pts.length;i++)d+=haversine(pts[i-1].lat,pts[i-1].lng,pts[i].lat,pts[i].lng);return d;}
@@ -1744,8 +1847,10 @@ function toggleGpxTrack(){
   refreshMap();
 }
 function clearGPX(){
-  if(!confirm('Clear all GPX tracks? Snapped pole locations are kept.'))return;
-  gpxTracks=[];saveGpxState();updateGPXUI();refreshMap();toast('All tracks cleared');
+  if(!confirm('Clear all GPX tracks?\n\nPoles that received their GPS/span from these files will lose that data. Manually pinned poles are kept.'))return;
+  gpxTracks=[];saveGpxState();updateGPXUI();
+  relinkAllPolesFromGPX();              // wipes gpx-sourced GPS/span from all poles
+  refreshMap();toast('All tracks cleared');
 }
 function nearestTrackPoint(lat,lng){
   const allPts=getAllGpxPts();
@@ -1777,8 +1882,8 @@ function snapAllPoles(){
 }
 function recalcAdjacentSpans(pole){
   const idx=S.poles.indexOf(pole);
-  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false&&locAlmostMatches(prev.location,pole.location))pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
-  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false&&locAlmostMatches(nxt.location,pole.location))nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
 }
 
 // ═══════════════════════════════════════════
@@ -1960,6 +2065,17 @@ async function downloadMapPDF(){
         c.strokeStyle=tCol; c.globalAlpha=0.85; c.lineWidth=3; c.beginPath();
         pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
         c.stroke(); c.globalAlpha=1;
+        // ── Location name label below midpoint of the track ──
+        if(pts.length>1){
+          const midPt=pts[Math.floor(pts.length/2)];
+          const mp=P(midPt.lat,midPt.lng);
+          const locLabel=locationForGpxName(track.name)||track.name;
+          c.font='700 9px Arial,Helvetica,sans-serif';
+          c.textBaseline='top'; c.textAlign='center';
+          c.lineWidth=3; c.strokeStyle='rgba(255,255,255,0.9)'; c.lineJoin='round';
+          c.strokeText(locLabel,mp.x,mp.y+8);
+          c.fillStyle=tCol; c.globalAlpha=0.9; c.fillText(locLabel,mp.x,mp.y+8); c.globalAlpha=1;
+        }
       });
       if(zoom<15)return;
       gpxTracks.forEach((track)=>{
@@ -2056,7 +2172,13 @@ async function downloadMapPDF(){
     pdf.text(today(),pageW-margin,margin+5,{align:'right'});
 
     pdf.addImage(imgData,'JPEG',x,y,drawW,drawH,undefined,'FAST');
-    pdf.save('FieldGrid_Map_'+today()+'.pdf');
+    // Filename = the location(s) the visible GPX file(s) match. If a track's
+    // filename matches a recorded location use that location; otherwise use the
+    // raw filename. Multiple tracks are joined with ', '.
+    const fnLoc=(gpxTracks||[]).map(t=>locationForGpxName(t.name)||t.name).filter(Boolean);
+    const baseLoc=fnLoc.length?fnLoc.join(', '):(getProjs().find(p=>p.id===CUR)?.name||'Map');
+    const safe=baseLoc.replace(/[\\/:*?"<>|]+/g,'_').slice(0,80);
+    pdf.save(safe+'.pdf');
     toast('⬇ PDF saved','#00a86b');
   }catch(e){toast('⚠ '+e.message.slice(0,70));}
 }
@@ -2121,7 +2243,7 @@ async function expXLSX(){
   if(typeof ExcelJS==='undefined'){toast('⚠ Excel engine still loading, try again');return;}
   toast('⏳ Building Excel…');
 
-  // Totals per component across all poles
+  // ── Totals per component across all poles ──
   const tot={};S.components.forEach(c=>tot[c.id]=0);
   S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
   const usedComps=S.components.filter(c=>(tot[c.id]||0)>0||(c.est||0)>0);
@@ -2134,6 +2256,7 @@ async function expXLSX(){
   // ── Style helpers (ExcelJS) ──
   const BT={style:'thin',color:{argb:'FF000000'}};
   const BM={style:'medium',color:{argb:'FF000000'}};
+  const BTK={style:'thick',color:{argb:'FF000000'}};
   const F12={name:'Calibri',size:12};
   const F12B={name:'Calibri',size:12,bold:true};
   const F14B={name:'Calibri',size:14,bold:true};
@@ -2146,67 +2269,197 @@ async function expXLSX(){
       cell.alignment=CEN; cell.border=thinAll;
     }
   };
+  // Convert 1-based column index to Excel letters (A, B, ..., Z, AA, AB, ...)
+  const colL=n=>{let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26);}return s;};
 
   const wb=new ExcelJS.Workbook();
 
-  // ════════════════ SHEET 1 — SDS ════════════════
+  // ════════════════════════════════════════════════════════════════════
+  // SHEET 1 — SDS  (Difference & Status are FORMULAS now)
+  // Columns: A=SN B=Description C=Unit D=Est.Qty E=Field Qty F=Difference G=Status H=Remarks
+  // ════════════════════════════════════════════════════════════════════
   const sds=wb.addWorksheet('SDS');
-  sds.columns=[{width:6},{width:36},{width:8},{width:14},{width:10}];
+  sds.columns=[{width:6},{width:36},{width:8},{width:12},{width:14},{width:12},{width:10},{width:18}];
+
   const sdsTitles=[
     'NEPAL ELECTRICITY AUTHORITY',
     'Distribution and Consumer Services Directorate',
     'Lumbini Provincial Office, Butwal',
     'Taulihawa Distribution Center',
-    'FY: 2081/82',
+    'FY: 2082/83',
     'Works At: '+locations.join(', '),
     'STRUCTURAL DATA SHEET (SDS)'
   ];
-  sdsTitles.forEach((t,i)=>{sds.addRow([t,'','','','']);sds.mergeCells(i+1,1,i+1,5);});
-  sds.addRow(['','','','','']);                                  // row 8 gap
-  sds.addRow(['S.N.','Description of Item','Unit','Qty (Field)','Est. Qty']); // row 9 header
-  let sdsFieldTotal=0, sdsEstTotal=0;
-  usedComps.forEach((c,i)=>{const q=tot[c.id]||0,e=c.est||0;sdsFieldTotal+=q;sdsEstTotal+=e;sds.addRow([i+1,c.name,c.unit,q,e]);});
-  sds.addRow(['','TOTAL','',sdsFieldTotal,sdsEstTotal]);          // ← TOTAL row
-  sds.getRow(1).height=18.75; sds.getRow(8).height=16.5;
-  // Title block styling + medium outer border (rows1-7) and row8 closes the box
-  const sdsTitleStyle=(r,bold,size)=>{for(let c=1;c<=5;c++){const cell=sds.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===5?BM:undefined};}};
-  sdsTitleStyle(1,true,14);[2,3,4,5].forEach(r=>sdsTitleStyle(r,false,12));sdsTitleStyle(6,true,12);sdsTitleStyle(7,true,12);
-  for(let c=1;c<=5;c++){const cell=sds.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===5?BM:undefined};}
-  tableStyle(sds,9,sds.rowCount,1,5,[9]);
+  sdsTitles.forEach((t,i)=>{sds.addRow([t,'','','','','','','']);sds.mergeCells(i+1,1,i+1,8);});
+  sds.addRow(['','','','','','','','']);                            // row 8 = gap row
+  sds.addRow(['S.N.','Description of Item','Unit','Est. Qty','Field Qty (Actual)','Difference','Status','Remarks']); // row 9 = header
 
-  // ════════════════ SHEET 2 — Pole Schedule (+ Photo column) ════════════════
+  // Data rows with FORMULAS for Difference (= E-D) and Status (= IF chain on F)
+  const sdsFirstData=10;
+  usedComps.forEach((c,i)=>{
+    const e=c.est||0, q=tot[c.id]||0;
+    const r=sdsFirstData+i;
+    sds.addRow([i+1,c.name,c.unit,e||0,q,null,null,'']);
+    sds.getCell(r,6).value={formula:`E${r}-D${r}`};
+    sds.getCell(r,7).value={formula:`IF(D${r}=0,"—",IF(F${r}>0,"OVER",IF(F${r}<0,"UNDER","EXACT")))`};
+  });
+  // TOTAL row — bold + THICK border. Diff is a formula too.
+  const sdsTotalRowNum=sds.rowCount+1;
+  sds.addRow(['','TOTAL','',{formula:`SUM(D${sdsFirstData}:D${sdsTotalRowNum-1})`},{formula:`SUM(E${sdsFirstData}:E${sdsTotalRowNum-1})`},{formula:`E${sdsTotalRowNum}-D${sdsTotalRowNum}`},'','']);
+  const sdsTotalRow=sds.getRow(sdsTotalRowNum);
+  sdsTotalRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font=F12B; cell.alignment=CEN;
+    cell.border={top:BTK,left:BTK,bottom:BTK,right:BTK};
+  });
+
+  sds.getRow(1).height=18.75; sds.getRow(8).height=16.5;
+  // Title block (rows 1-7) — medium outer border on 8 cols
+  const sdsTitleStyle=(r,bold,size)=>{for(let c=1;c<=8;c++){const cell=sds.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===8?BM:undefined};}};
+  sdsTitleStyle(1,true,14);[2,3,4,5].forEach(r=>sdsTitleStyle(r,false,12));sdsTitleStyle(6,true,12);sdsTitleStyle(7,true,12);
+  for(let c=1;c<=8;c++){const cell=sds.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===8?BM:undefined};}
+  // Data area: thin borders, bold header row
+  tableStyle(sds,9,sdsTotalRowNum-1,1,8,[9]);
+
+  // ════════════════════════════════════════════════════════════════════
+  // SHEET 2 — Pole Schedule (same title block as SDS, formulas, Total Span, Remarks last)
+  // ════════════════════════════════════════════════════════════════════
   const sch=wb.addWorksheet('Pole Schedule');
+
+  // Trim component columns to those actually used
   const compColsToKeep=usedIds.map((id,ci)=>S.poles.some(p=>(p.components?.[id]||0)>0)?ci:null).filter(ci=>ci!==null);
   const compNames=compColsToKeep.map(ci=>usedNames[ci]);
   const compIds=compColsToKeep.map(ci=>usedIds[ci]);
-  const hdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Cable Connected','Remarks','Recorded At',...compNames,'Photo'];
-  sch.addRow(hdr);
-  const PHOTO_COL=hdr.length;        // 1-based index of the Photo column
-  const spanColIdx=6;
+  // Final column order:
+  //   1 SN  2 Pole Code  3 Location  4 Latitude  5 Longitude  6 Span (m)
+  //   7 Total Span     8 Cable Connected  9 Recorded At  10..(9+N) Components
+  //  (10+N) Photo   (11+N) Remarks
+  const hdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Span (m)','Total Span','Cable Connected','Recorded At',...compNames,'Photo','Remarks'];
+  const TOTAL_COLS=hdr.length;
+  const SPAN_COL=6, TOTSPAN_COL=7;
+  const PHOTO_COL=10+compNames.length;
+  const REMARKS_COL=PHOTO_COL+1;
+
+  // ── Title block (rows 1-7) + gap (row 8), mirroring SDS ──
+  const schTitles=[
+    'NEPAL ELECTRICITY AUTHORITY',
+    'Distribution and Consumer Services Directorate',
+    'Lumbini Provincial Office, Butwal',
+    'Taulihawa Distribution Center',
+    'FY: 2082/83',
+    'Works At: '+locations.join(', '),
+    'POLE SCHEDULE'
+  ];
+  schTitles.forEach((t,i)=>{
+    const arr=Array(TOTAL_COLS).fill(''); arr[0]=t;
+    sch.addRow(arr); sch.mergeCells(i+1,1,i+1,TOTAL_COLS);
+  });
+  sch.addRow(Array(TOTAL_COLS).fill(''));                              // row 8 gap
+
+  // ── Span multiplier cell — user edits this AFTER export to set the factor ──
+  // Row 9: label in A-F (merged), the multiplier value in G (Total Span column).
+  // All Total-Span formulas reference $G$9 absolutely, so changing G9 updates everything.
+  const multRowNum=9;
+  const multLabelRow=Array(TOTAL_COLS).fill('');
+  multLabelRow[0]='Span multiplier (edit this cell → all Total Span values recompute):';
+  multLabelRow[TOTSPAN_COL-1]=1;                                       // default = 1
+  sch.addRow(multLabelRow);
+  sch.mergeCells(multRowNum,1,multRowNum,TOTSPAN_COL-1);
+  // Style the multiplier row: bold label, highlighted multiplier cell
+  for(let c=1;c<=TOTAL_COLS;c++){
+    const cell=sch.getCell(multRowNum,c);
+    cell.font=F12B; cell.alignment={horizontal:c===TOTSPAN_COL?'center':'right',vertical:'middle',wrapText:true};
+    cell.border=thinAll;
+    if(c===TOTSPAN_COL){
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF3CD'}}; // pale yellow
+      cell.font={name:'Calibri',size:12,bold:true,color:{argb:'FF856404'}};
+    }
+  }
+  sch.addRow(Array(TOTAL_COLS).fill(''));                              // row 10 gap
+
+  // ── Data table starts at row 11: header + body ──
+  const HEADER_ROW=11;
+  // Header row: assign cell-by-cell so we land in columns A..N exactly.
+  hdr.forEach((h,i)=>{ sch.getCell(HEADER_ROW, i+1).value = h; });
+
   let spanTotal=0; const compTotals=compIds.map(()=>0);
-  const photoRows=[];                // {rowNum, dataURL}
+  const photoRows=[];
+  const firstDataRow=HEADER_ROW+1;
   S.poles.forEach((p,i)=>{
     if(p.span)spanTotal+=p.span;
     const compVals=compIds.map((id,k)=>{const v=p.components?.[id]||0;compTotals[k]+=v;return v;});
-    const row=sch.addRow([
-      i+1,p.code,p.location||'',
-      p.lat!=null?+p.lat.toFixed(6):'',
-      p.lng!=null?+p.lng.toFixed(6):'',
-      p.span||'',
-      i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',
-      p.remarks||'',
-      p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',
-      ...compVals,''
-    ]);
-    if(p.photo)photoRows.push({rowNum:row.number,dataURL:p.photo,name:(p.code+'_'+(p.location||'')).replace(/[^A-Za-z0-9_\-]+/g,'_')});
+    const rowNum=firstDataRow+i;
+    const rowVals=[
+      i+1,                                                   // A SN
+      p.code,                                                // B Code
+      p.location||'',                                        // C Location
+      p.lat!=null?+p.lat.toFixed(6):'',                      // D Lat
+      p.lng!=null?+p.lng.toFixed(6):'',                      // E Lng
+      p.span||0,                                             // F Span
+      null,                                                  // G Total Span — set below as formula
+      i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',  // H Cable
+      p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',                        // I Recorded
+      ...compVals,                                           // components
+      '',                                                    // Photo placeholder
+      p.remarks||''                                          // Remarks (last)
+    ];
+    const row=sch.addRow(rowVals);
+    // Total Span formula: Span * $G$9 (the multiplier)
+    sch.getCell(rowNum,TOTSPAN_COL).value={formula:`F${rowNum}*$${colL(TOTSPAN_COL)}$${multRowNum}`};
+    if(p.photo)photoRows.push({rowNum,dataURL:p.photo,name:(p.code+'_'+(p.location||'')).replace(/[^A-Za-z0-9_\-]+/g,'_')});
   });
-  // TOTAL row
-  const totalRow=['','TOTAL','','','',spanTotal||'','','','',...compTotals,''];
-  sch.addRow(totalRow);
-  sch.columns=[{width:5},{width:12},{width:22},{width:13},{width:13},{width:9},{width:14},{width:22},{width:17},...compNames.map(()=>({width:18})),{width:16}];
-  tableStyle(sch,1,sch.rowCount,1,hdr.length,[1, sch.rowCount]);
 
-  // Embed photos, named <code>_<location>, sized to fit the cell
+  // ── TOTAL row ── sums Span and Total Span; sums component columns; leaves text columns blank
+  const totalRowNum=sch.rowCount+1;
+  const totalArr=Array(TOTAL_COLS).fill('');
+  totalArr[1]='TOTAL';
+  totalArr[SPAN_COL-1]={formula:`SUM(F${firstDataRow}:F${totalRowNum-1})`};
+  totalArr[TOTSPAN_COL-1]={formula:`SUM(G${firstDataRow}:G${totalRowNum-1})`};
+  compIds.forEach((_,k)=>{
+    const ci=10+k;                                       // 1-based component column
+    totalArr[ci-1]={formula:`SUM(${colL(ci)}${firstDataRow}:${colL(ci)}${totalRowNum-1})`};
+  });
+  sch.addRow(totalArr);
+  // Thick-border + bold the TOTAL row
+  const totalRow=sch.getRow(totalRowNum);
+  totalRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font=F12B; cell.alignment=CEN;
+    cell.border={top:BTK,left:BTK,bottom:BTK,right:BTK};
+  });
+
+  // ── ±5% row (one row, just below TOTAL) ──
+  // Shows lower & upper bounds for both Span (F) and Total Span (G) as ranges.
+  const tolRowNum=totalRowNum+1;
+  const tolArr=Array(TOTAL_COLS).fill('');
+  tolArr[1]='± 5%';
+  tolArr[SPAN_COL-1]={formula:`ROUND(F${totalRowNum}*0.95,2)&" — "&ROUND(F${totalRowNum}*1.05,2)`};
+  tolArr[TOTSPAN_COL-1]={formula:`ROUND(G${totalRowNum}*0.95,2)&" — "&ROUND(G${totalRowNum}*1.05,2)`};
+  sch.addRow(tolArr);
+  const tolRow=sch.getRow(tolRowNum);
+  tolRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font={name:'Calibri',size:11,italic:true,bold:true};
+    cell.alignment=CEN; cell.border=thinAll;
+    cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF6FB'}};
+  });
+
+  // ── Column widths ──
+  sch.columns=[
+    {width:5},{width:12},{width:22},{width:13},{width:13},{width:9},{width:12},  // SN..Total Span
+    {width:14},{width:17},                                                       // Cable, Recorded
+    ...compNames.map(()=>({width:18})),                                          // components
+    {width:16},                                                                  // Photo
+    {width:24}                                                                   // Remarks (wider, last)
+  ];
+
+  // ── Style title block (rows 1-7 + gap row 8), mirroring SDS ──
+  sch.getRow(1).height=18.75; sch.getRow(8).height=16.5;
+  const schTitleStyle=(r,bold,size)=>{for(let c=1;c<=TOTAL_COLS;c++){const cell=sch.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===TOTAL_COLS?BM:undefined};}};
+  schTitleStyle(1,true,14);[2,3,4,5].forEach(r=>schTitleStyle(r,false,12));schTitleStyle(6,true,12);schTitleStyle(7,true,12);
+  for(let c=1;c<=TOTAL_COLS;c++){const cell=sch.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===TOTAL_COLS?BM:undefined};}
+
+  // ── Style the data table (header + body, thin all-around) ──
+  tableStyle(sch,HEADER_ROW,totalRowNum-1,1,TOTAL_COLS,[HEADER_ROW]);
+
+  // ── Embed photos ──
   const PH_W=86, PH_H=66, ROW_H=52;
   photoRows.forEach(pr=>{
     sch.getRow(pr.rowNum).height=ROW_H;
@@ -2215,29 +2468,8 @@ async function expXLSX(){
       if(!m)return;
       const id=wb.addImage({base64:m[2],extension:(m[1]==='png'?'png':'jpeg')});
       sch.addImage(id,{tl:{col:PHOTO_COL-1+0.08,row:pr.rowNum-1+0.08},ext:{width:PH_W,height:PH_H},editAs:'oneCell',name:pr.name});
-      // Also drop the code_location name as a tooltip/comment-free fallback in an offscreen note:
-      // (the visible identifier remains the adjacent Pole Code + Location columns)
     }catch(e){}
   });
-
-  // ════════════════ SHEET 3 — BOM (already had TOTAL) ════════════════
-  const bom=wb.addWorksheet('BOM');
-  bom.columns=[{width:7},{width:36},{width:8},{width:10},{width:10},{width:12},{width:10}];
-  bom.addRow(['BILL OF MATERIALS — '+proj,'','','','','','']);bom.mergeCells(1,1,1,7);
-  bom.addRow(['Date: '+dateStr,'','','','','','']);bom.mergeCells(2,1,2,7);
-  bom.addRow(['','','','','','','']);
-  bom.addRow(['SN','Component','Unit','Est. Qty','Field Qty','Difference','Status']);
-  usedComps.forEach((c,i)=>{const used=tot[c.id]||0,est=c.est||0,diff=used-est;bom.addRow([i+1,c.name,c.unit,est||'—',used,(diff===0&&est>0)?0:diff,used>est?'OVER':(used<est&&est>0)?'UNDER':(used===est&&est>0)?'EXACT':'—']);});
-  bom.addRow(['','','','','','','']);
-  const bomTotUsed=usedComps.reduce((a,c)=>a+(tot[c.id]||0),0);
-  const bomTotEst=usedComps.reduce((a,c)=>a+(c.est||0),0);
-  bom.addRow(['','TOTAL','',bomTotEst,bomTotUsed,bomTotUsed-bomTotEst,'']);
-  const bomLast=bom.rowCount;
-  for(let r=1;r<=bomLast;r++)for(let c=1;c<=7;c++){
-    const cell=bom.getCell(r,c);
-    cell.font=(r===1||r===4||r===bomLast)?F12B:F12;
-    cell.alignment=CEN; cell.border=thinAll;
-  }
 
   // ── Write & download ──
   try{
@@ -2245,12 +2477,13 @@ async function expXLSX(){
     const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download='FieldGrid_'+proj.replace(/[^a-z0-9]/gi,'_')+'_'+dateStr+'.xlsx';
+    a.download=proj.replace(/[^a-z0-9]/gi,'_').slice(0,80)+'_'+dateStr+'.xlsx';
     document.body.appendChild(a);a.click();document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast('⬇ Excel exported','#00a86b');
   }catch(e){toast('⚠ Export failed: '+e.message.slice(0,50));}
 }
+
 
 function downloadProjectBackup(){
   // Complete, re-importable JSON snapshot of the running project.
@@ -2266,7 +2499,7 @@ function downloadProjectBackup(){
   const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='FieldGrid_Backup_'+projName.replace(/[^a-z0-9]/gi,'_')+'_'+today()+'.json';
+  a.download=projName.replace(/[\\/:*?"<>|]+/g,'_').slice(0,80)+'.json';
   document.body.appendChild(a);a.click();document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(a.href),5000);
   toast('⬇ Backup saved','#1e8449');
@@ -2287,6 +2520,13 @@ function restoreProjectBackup(){
         S.cableConnect=b.cableConnect??null;
         pSet('poles',S.poles);pSet('components',S.components);pSet('locations',S.locations);
         if(typeof gpxTracks!=='undefined'){gpxTracks=Array.isArray(b.gpxTracks)?b.gpxTracks:[];try{saveGpxState();}catch(_){}}
+        // Restore the project name in the project list too, so the running project is
+        // renamed to match the backup (the user can refine it later via Rename).
+        if(b.projectName){
+          const ls=getProjs();
+          const idx=ls.findIndex(p=>p.id===CUR);
+          if(idx>=0){ls[idx]=Object.assign({},ls[idx],{name:b.projectName});saveProjs(ls);renderProjSel&&renderProjSel();renderProjList&&renderProjList();}
+        }
         renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();
         if(typeof updateGPXUI==='function')try{updateGPXUI();}catch(_){}
         if(mapInitialised)refreshMap();
