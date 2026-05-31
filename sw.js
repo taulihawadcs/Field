@@ -1,28 +1,30 @@
 /* ════════════════════════════════════════════════════════════════════════
    FieldGrid — Service Worker
+   Built for: FieldGrid_Pro_v24.html
    ------------------------------------------------------------------------
    Gives the app offline capability so a surveyor can keep recording poles,
    editing data and viewing already-loaded map tiles with no signal.
 
-   STRATEGY
-   • App shell (the HTML page + same-origin assets) → network-first, fall back
-     to cache. This means you always get the freshest app when online, but it
-     still opens when offline.
-   • CDN libraries (Leaflet, xlsx-js-style, jsPDF, Font Awesome, Google Fonts)
-     → stale-while-revalidate. Served instantly from cache, refreshed in the
-     background when a connection exists.
-   • Map tiles (OpenStreetMap, OpenTopoMap, ArcGIS, Google) → cache-first with a
-     rolling cap, so tiles you have already viewed stay available offline. New
-     tiles are fetched and cached as you pan/zoom while online.
+   CACHING STRATEGY
+   • App shell (the HTML page + any same-origin files) → network-first, fall
+     back to cache. You always get the freshest build online and the app still
+     opens offline.
+   • CDN libraries (Leaflet, xlsx-js-style, ExcelJS, jsPDF, Font Awesome,
+     Google Fonts) → stale-while-revalidate. Served instantly from cache,
+     refreshed in the background. Excel/PDF export keeps working offline.
+   • Map tiles (OpenStreetMap, OpenTopoMap, ArcGIS imagery, Google satellite)
+     → cache-first with a rolling cap. Areas you have already viewed stay
+     available offline; new tiles cache as you pan/zoom while online.
 
    HOW TO USE
-   • Place this sw.js file in the SAME folder and at the SAME path as the
-     FieldGrid HTML file, then serve both over http(s) (not file://).
-     A service worker cannot run from a file:// URL.
-   • Bump CACHE_VERSION whenever you ship a new build to force an update.
+   • Put this sw.js file in the SAME folder as the FieldGrid HTML, and serve
+     both over http(s) — not file://. A service worker cannot run from a
+     file:// URL.
+   • Bump CACHE_VERSION below whenever you ship a new build so clients drop
+     the old cache on their next load.
    ════════════════════════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'v18';
+const CACHE_VERSION = 'v24';
 const SHELL_CACHE = 'fieldgrid-shell-' + CACHE_VERSION;
 const LIB_CACHE   = 'fieldgrid-libs-'  + CACHE_VERSION;
 const TILE_CACHE  = 'fieldgrid-tiles-' + CACHE_VERSION;
@@ -30,31 +32,33 @@ const TILE_CACHE  = 'fieldgrid-tiles-' + CACHE_VERSION;
 // Cap on cached map tiles to avoid unbounded storage growth.
 const MAX_TILES = 1500;
 
-// Same-origin shell files to pre-cache. The HTML itself is added at runtime
-// (its filename varies), so we keep this list to the relative roots.
+// Same-origin shell URLs to try to pre-cache. The actual HTML filename may
+// vary (FieldGrid_Pro_v24.html, app.html, index.html, …) so we keep this
+// list to relative roots; the HTML is also cached at runtime when fetched.
 const SHELL_URLS = [
   './',
   './index.html'
 ];
 
-// CDN libraries the app depends on. Cached on first use (stale-while-revalidate).
+// CDN libraries the app depends on (matches v24's <script>/<link> imports).
+// Matched loosely so subdomains of these hosts also match.
 const LIB_HOSTS = [
-  'unpkg.com',
-  'cdn.jsdelivr.net',
-  'cdnjs.cloudflare.com',
-  'fonts.googleapis.com',
-  'fonts.gstatic.com'
+  'unpkg.com',                    // Leaflet JS + CSS
+  'cdn.jsdelivr.net',             // xlsx-js-style
+  'cdnjs.cloudflare.com',         // ExcelJS, jsPDF, Font Awesome
+  'fonts.googleapis.com',         // Segoe UI fallback CSS
+  'fonts.gstatic.com'             // font files referenced by the CSS above
 ];
 
-// Tile server hosts. Matched loosely so subdomains (a/b/c.tile…) also match.
+// Map tile hosts. Subdomain wildcards (a/b/c.tile…) and mt0-mt3 are matched.
 const TILE_HOSTS = [
   'tile.openstreetmap.org',
   'tile.opentopomap.org',
   'server.arcgisonline.com',
-  'google.com'            // mt0-3.google.com satellite tiles
+  'google.com'                    // mt0-3.google.com satellite tiles
 ];
 
-// ── INSTALL ───────────────────────────────────────────────────────────────
+// ── INSTALL ────────────────────────────────────────────────────────────────
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
@@ -73,7 +77,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Allow the page to trigger an immediate update via postMessage.
+// Let the page trigger an immediate activation when a new SW is waiting.
 self.addEventListener('message', event => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
@@ -81,7 +85,7 @@ self.addEventListener('message', event => {
 const isTile = url => TILE_HOSTS.some(h => url.hostname.endsWith(h) || url.hostname.includes(h));
 const isLib  = url => LIB_HOSTS.some(h => url.hostname === h || url.hostname.endsWith('.' + h));
 
-// ── FETCH ───────────────────────────────────────────────────────────────────
+// ── FETCH ──────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;                 // never cache writes
@@ -150,12 +154,11 @@ self.addEventListener('fetch', event => {
   }
 });
 
-// ── Keep the tile cache from growing without bound (FIFO eviction) ──────────
+// ── Keep the tile cache from growing without bound (FIFO eviction) ─────────
 function trimCache(cacheName, maxItems) {
   caches.open(cacheName).then(cache =>
     cache.keys().then(keys => {
       if (keys.length <= maxItems) return;
-      // Delete the oldest entries beyond the cap.
       const remove = keys.length - maxItems;
       for (let i = 0; i < remove; i++) cache.delete(keys[i]);
     })
