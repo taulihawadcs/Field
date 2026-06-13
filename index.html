@@ -1645,4 +1645,1261 @@ function refreshMap(){
           permanent:true,direction:'bottom',offset:[0,6],
           className:'fg-perm-lbl',interactive:false,opacity:1
         }).setLatLng([midPt.lat-OFFSET_DEG,midPt.lng])
-          .setContent(`<span style="font-size:9px;font-weight:700;color:${tCol};text-shadow:
+          .setContent(`<span style="font-size:9px;font-weight:700;color:${tCol};text-shadow:0 0 3px #fff,0 0 3px #fff,1px 1px 1px #fff,-1px -1px 1px #fff;white-space:nowrap;letter-spacing:.3px">${esc(locLabel)}</span>`).addTo(leafletMap);
+        mapOverlayLayers.push(nameLbl);
+      }
+
+      // ── PASS 1: Fill in this track's poles, but ONLY if its file name exactly
+      // matches a recorded location (case/whitespace-insensitive). Pass the track name
+      // so the matcher can do the strict filename-vs-location check.
+      autoLinkTrackToPoles(pts, track.name);
+
+      // ── PASS 2: Render dots/labels only if zoomed in enough; otherwise just the polyline ──
+      // Below z=15 the map is too zoomed out for any GPX dot/label without clutter.
+      if(zoom<15)return;
+
+      // Build matched-pole lookup once (used only for auto-linking — no longer for skipping render)
+      const matchedNames=new Set(S.poles.map(p=>p.code));
+
+      // Collect candidates: all NAMED waypoints get visible dots/labels (matched or not).
+      // Recorded poles are NOT drawn on the map; the GPX waypoint is the single visual.
+      // Unnamed track points are not labelled (the polyline already shows the route).
+      const candidates=[];
+      let cumDist=0;
+      pts.forEach((pt,i)=>{
+        if(i>0)cumDist+=haversine(pts[i-1].lat,pts[i-1].lng,pt.lat,pt.lng);
+        const nm=(pt.name||'').trim();
+        if(!nm)return;                  // skip unnamed
+        candidates.push({pt,i,nm,cumDist,isMatched:matchedNames.has(nm)});
+      });
+
+      // Cap how many labels we show to avoid clutter on dense tracks.
+      // At z=15 show up to 30 labels, z>=17 show up to 200.
+      const maxLabels=zoom>=17?200:zoom>=16?80:30;
+      const lblStep=Math.max(1,Math.ceil(candidates.length/maxLabels));
+
+      candidates.forEach((c,ci)=>{
+        const showLbl=(ci%lblStep===0)||ci===0||ci===candidates.length-1;
+        const {pt,nm,cumDist}=c;
+
+        // Always draw a tiny black dot for named unmatched waypoints
+        const tooltipHTML=`<div style="font-weight:700;font-size:12px;color:#154360">${esc(nm)}</div>`
+          +`<div style="font-size:10px;color:#555">${esc(track.name)}</div>`
+          +`<div style="font-size:10px;color:#333">${pt.lat.toFixed(6)}, ${pt.lng.toFixed(6)}`
+          +(pt.ele!=null?` · ${pt.ele.toFixed(0)}m`:'')
+          +(cumDist>0?` · ${cumDist.toFixed(0)}m from start`:'')
+          +'</div>';
+        const dot=L.circleMarker([pt.lat,pt.lng],{
+          radius:3,color:'#111',fillColor:'#111',fillOpacity:0.85,weight:1
+        }).bindTooltip(tooltipHTML,{direction:'top',sticky:false}).addTo(leafletMap);
+        mapOverlayLayers.push(dot);
+
+        // Permanent name label using Leaflet's tooltip — always click-through, never blocks pan/zoom
+        if(showLbl){
+          const lbl=L.tooltip({
+            permanent:true,direction:'right',offset:[4,0],
+            className:'fg-perm-lbl',interactive:false,opacity:1
+          }).setLatLng([pt.lat,pt.lng]).setContent(`<span class="fg-map-lbl">${esc(nm)}</span>`).addTo(leafletMap);
+          mapOverlayLayers.push(lbl);
+        }
+      });
+
+      // ── PASS 3: Inter-waypoint span labels — only at high zoom, only between NAMED neighbours ──
+      if(zoom>=16){
+        for(let k=1;k<candidates.length;k++){
+          const a=candidates[k-1],b=candidates[k];
+          // Only label spans between sequentially adjacent named points in the track
+          if(b.i-a.i>5)continue;          // too many unnamed points between → not a real span
+          const segDist=haversine(a.pt.lat,a.pt.lng,b.pt.lat,b.pt.lng);
+          if(segDist<3)continue;
+          const mLat=(a.pt.lat+b.pt.lat)/2,mLng=(a.pt.lng+b.pt.lng)/2;
+          const spanLbl=L.tooltip({
+            permanent:true,direction:'center',offset:[0,0],
+            className:'fg-perm-lbl',interactive:false,opacity:1
+          }).setLatLng([mLat,mLng]).setContent(`<span class="fg-map-lbl fg-map-span">${segDist.toFixed(0)}m</span>`).addTo(leafletMap);
+          mapOverlayLayers.push(spanLbl);
+        }
+      }
+    });
+  }
+
+  // ── Poles without GPS warning ──
+  const polesWithGPS=S.poles.filter(p=>p.lat&&p.lng);
+  const polesWithoutGPS=S.poles.filter(p=>!p.lat||!p.lng);
+  const noGPS=document.getElementById('no-gps-poles');
+  if(noGPS){
+    if(polesWithoutGPS.length){
+      noGPS.style.display='block';
+      const pinHint=pinPoleTarget?`<div style="margin-top:6px;font-size:11px;font-weight:700;color:var(--primary)">📍 Tap map for <b>${esc(pinPoleCode)}</b> · <a href="#" onclick="cancelPinMode();return false" style="color:var(--danger)">cancel</a></div>`:'';
+      noGPS.innerHTML='<b>⚠ '+polesWithoutGPS.length+' pole(s) with no GPS — tap to pin on map:</b><div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">'+polesWithoutGPS.map(p=>`<button class="btn bo sm" style="font-size:10px" onclick="startPinMode('${esc(p.id)}','${esc(p.code)}')">📍 ${esc(p.code)}</button>`).join('')+'</div>'+pinHint;
+    }else noGPS.style.display='none';
+  }
+  const badge=document.getElementById('map-stats-badge');
+  if(badge)badge.innerHTML='<b>'+polesWithGPS.length+'</b>/'+S.poles.length+' poles'+(polesWithoutGPS.length?' · <b style="color:var(--danger)">'+polesWithoutGPS.length+' need pin</b>':'');
+  if(!polesWithGPS.length)return;
+
+  // Pole overlays are no longer drawn on the map (GPX is the only on-map layer).
+  // These remain as constants so the (disabled) pole-render block still compiles.
+  const showCables=true,showLabels=true,showSpans=true;
+
+  // ── Recorded poles are intentionally NOT drawn on the map. ──
+  // The GPX waypoints + track polyline are the single source of truth on screen.
+  // Recorded-pole data (coords, span, components, remarks) still flows through to
+  // the Excel export, the BOM, the schedule, the PDF map export, etc.
+  const RENDER_POLES_ON_MAP=false;
+
+  // ── Cable lines between poles ──
+  if(RENDER_POLES_ON_MAP&&showCables){
+    for(let i=1;i<S.poles.length;i++){
+      const prev=S.poles[i-1],cur=S.poles[i];
+      if(!prev.lat||!prev.lng||!cur.lat||!cur.lng)continue;
+      if(cur.connectedToPrev===false)continue;
+      const col=cur.poleType==='existing'?'#888':NEW_COL;
+      const sh=L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]],{color:'#000',weight:5,opacity:.25}).addTo(leafletMap);
+      const pl=L.polyline([[prev.lat,prev.lng],[cur.lat,cur.lng]],{color:col,weight:3,opacity:.9}).addTo(leafletMap);
+      mapPolylines.push(sh,pl);
+      if(showSpans&&cur.span){
+        const mLat=(prev.lat+cur.lat)/2,mLng=(prev.lng+cur.lng)/2;
+        const lbl=L.marker([mLat,mLng],{icon:L.divIcon({html:`<span class="fg-map-lbl fg-map-span">${cur.span}m</span>`,className:'fg-lbl-wrap',iconSize:[1,1],iconAnchor:[12,6]}),interactive:false,keyboard:false}).addTo(leafletMap);
+        mapOverlayLayers.push(lbl);
+      }
+    }
+  }
+
+  // ── Pole markers (suppressed on map by design — see RENDER_POLES_ON_MAP) ──
+  if(RENDER_POLES_ON_MAP)polesWithGPS.forEach(p=>{
+    const srcCode=poleGpsSource(p);
+    const isExisting=p.poleType==='existing';
+    const compEntries=Object.entries(p.components||{}).filter(e=>e[1]>0);
+    const compHTML=compEntries.map(e=>{const n=S.components.find(c=>c.id===e[0])?.name||e[0];return`<span class="pole-popup-comp">${esc(n)} ×${e[1]}</span>`;}).join('');
+    const snapBtn=gpxTracks.length&&srcCode!=='twonav'?`<br><button onclick="snapPoleToTrack('${esc(p.id)}')" style="background:#2e86de;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;margin-top:5px">🎯 Snap to GPS track</button>`:'';
+    const editBtn=`<br><button onclick="leafletMap.closePopup();goPage('record');setTimeout(()=>startEditPole('${esc(p.id)}'),200)" style="background:var(--primary,#154360);color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;margin-top:5px"><i class='fa fa-pen'></i> Edit</button>`;
+    const popupHTML=`<div class="pole-popup-code">${esc(p.code)}</div><div class="pole-popup-row"><b>${esc(p.location||'—')}</b> · ${p.poleType||'—'}${p.span?' · '+p.span+'m':''}</div><div class="pole-popup-row">📍 ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}${p.acc?' ±'+p.acc.toFixed(1)+'m':''}</div>${p.remarks?`<div class="pole-popup-row" style="font-style:italic">${esc(p.remarks)}</div>`:''}<div style="margin-top:5px;line-height:1.8">${compHTML}</div>${snapBtn}${editBtn}`;
+
+    // Big clear circle dot — solid for new, dashed-ring for existing
+    const marker=L.circleMarker([p.lat,p.lng],{
+      radius:isExisting?9:10,
+      color:isExisting?'#666':'#0a2a42',
+      fillColor:isExisting?'#bbb':NEW_COL,
+      fillOpacity:isExisting?0.55:0.9,
+      weight:isExisting?2.5:2,
+      dashArray:isExisting?'5,3':null
+    }).bindPopup(popupHTML,{maxWidth:280,minWidth:180}).addTo(leafletMap);
+    mapMarkers.push(marker);
+
+    // Code label above dot — plain bold text with white halo, NO rectangular box, click-through
+    if(showLabels){
+      const lm=L.marker([p.lat,p.lng],{icon:L.divIcon({html:`<span class="fg-map-lbl fg-pole-code">${esc(p.code)}</span>`,className:'fg-lbl-wrap',iconSize:[1,1],iconAnchor:[20,24]}),interactive:false,keyboard:false,zIndexOffset:50}).addTo(leafletMap);
+      mapOverlayLayers.push(lm);
+    }
+  });
+
+  const totalSpan=S.poles.reduce((a,p)=>a+(p.span||0),0);
+  if(badge)badge.innerHTML='<b>'+polesWithGPS.length+'</b>/'+S.poles.length+' · <b>'+totalSpan.toFixed(0)+'m</b>'+(polesWithoutGPS.length?' · <b style="color:var(--danger)">'+polesWithoutGPS.length+' need pin</b>':'');
+  // IMPORTANT: do NOT fit/zoom here. refreshMap runs on every zoomend; re-fitting would
+  // instantly snap the view back and make manual zoom impossible. Fitting happens only on
+  // explicit triggers: initial map load, the Fit All button, and right after GPX import.
+}
+function refreshOverlays(){refreshMap();}
+function fitMapToPoles(){
+  const polePts=S.poles.filter(p=>p.lat&&p.lng).map(p=>[p.lat,p.lng]);
+  const gpxPts=getAllGpxPts().map(p=>[p.lat,p.lng]);
+  const pts=[...polePts,...gpxPts];
+  if(!pts.length||!leafletMap)return;
+  if(pts.length===1){leafletMap.setView(pts[0],17);return;}
+  leafletMap.fitBounds(L.latLngBounds(pts),{padding:[40,40],maxZoom:18});
+}
+
+// ═══════════════════════════════════════════
+// GPX IMPORT — multi-file, track points, spans
+// ═══════════════════════════════════════════
+let gpxTracks=[],gpxTrackLayer=null,gpxTrackVisible=true;
+// Legacy alias so snapping still works
+function getAllGpxPts(){return gpxTracks.flatMap(t=>t.pts);}
+// Keep pSet/lsGet compatible
+function saveGpxState(){try{pSet('gpxTracks',gpxTracks.map(t=>({name:t.name,pts:t.pts})));}catch(e){}}
+function loadGpxState(){try{const d=pSet?lsGet(pk('gpxTracks'),null):null;if(d&&d.length){gpxTracks=d;}}catch(e){}}
+
+function parseGPXFile(text,fileName){
+  const xml=new DOMParser().parseFromString(text,'text/xml');
+  const parseErr=xml.querySelector('parsererror');
+  if(parseErr)throw new Error('Invalid XML/GPX: '+parseErr.textContent.slice(0,50));
+  const pts=[];
+  let nodes=Array.from(xml.querySelectorAll('trkpt'));
+  if(!nodes.length)nodes=Array.from(xml.querySelectorAll('rtept'));
+  if(!nodes.length)nodes=Array.from(xml.querySelectorAll('wpt'));
+  if(!nodes.length){
+    const ns=xml.documentElement.getAttribute('xmlns')||'';
+    if(ns)nodes=Array.from(xml.getElementsByTagNameNS(ns,'trkpt'));
+    if(!nodes.length&&ns)nodes=Array.from(xml.getElementsByTagNameNS(ns,'rtept'));
+  }
+  nodes.forEach((node,i)=>{
+    const lat=parseFloat(node.getAttribute('lat')||node.getAttribute('LAT')||'');
+    const lng=parseFloat(node.getAttribute('lon')||node.getAttribute('LON')||node.getAttribute('lng')||'');
+    if(!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0){
+      const ele=parseFloat(node.querySelector('ele')?.textContent)||null;
+      const time=node.querySelector('time')?.textContent||null;
+      const name=node.querySelector('name')?.textContent||null;
+      pts.push({lat,lng,ele,time,name,idx:i});
+    }
+  });
+  // IMPORTANT: the track's matchable identity is the FILE NAME (without extension),
+  // not the inner <trk><name>. This is what the user types and renames on the file
+  // system to mirror the recorded location.
+  const baseName=fileName.replace(/\.[^.]+$/,'');           // strip any extension
+  return{name:baseName,fileName:fileName,pts};
+}
+
+function importGPXFiles(files){
+  if(!files||!files.length)return;
+  let loaded=0,errors=[];
+  Array.from(files).forEach(file=>{
+    const reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        const track=parseGPXFile(e.target.result,file.name);
+        if(!track.pts.length){errors.push(file.name+': no pts');return;}
+        // Replace if same name, otherwise append
+        const existing=gpxTracks.findIndex(t=>t.name===track.name);
+        if(existing>=0)gpxTracks[existing]=track;else gpxTracks.push(track);
+        loaded++;
+      }catch(err){errors.push(file.name+': '+err.message.slice(0,40));}
+      if(loaded+errors.length===files.length){
+        saveGpxState();
+        updateGPXUI();
+        relinkAllPolesFromGPX();          // re-sync pole spans/lat/lng with current track set
+        if(!mapInitialised)initMap();
+        refreshMap();
+        // Auto-fit to all track bounds
+        const allPts=getAllGpxPts();
+        if(leafletMap&&allPts.length){
+          leafletMap.fitBounds(L.latLngBounds(allPts.map(p=>[p.lat,p.lng])),{padding:[30,30],maxZoom:18});
+        }
+        const msg=loaded+' track(s) loaded'+(errors.length?' · '+errors.length+' error(s)':'');
+        toast('📡 '+msg,'#2e86de');
+        if(errors.length)console.warn('GPX errors:',errors);
+      }
+    };
+    reader.readAsText(file);
+  });
+  document.getElementById('gpx-file-input').value='';
+}
+
+function updateGPXUI(){
+  const allPts=getAllGpxPts();
+  const totalKm=(computeTrackLength(allPts)/1000).toFixed(2);
+  const fc=document.getElementById('gpx-file-count');
+  if(fc){fc.textContent=gpxTracks.length+' file'+(gpxTracks.length!==1?'s':'');fc.style.display=gpxTracks.length?'':'none';}
+  document.getElementById('gpx-status').innerHTML=
+    gpxTracks.length?'✅ <b>'+gpxTracks.length+'</b> track file(s) · <b>'+allPts.length+'</b> pts total · <b>'+totalKm+' km</b>':
+    'No GPX imported.';
+  // File list
+  const fl=document.getElementById('gpx-file-list');
+  if(fl){
+    fl.style.display=gpxTracks.length?'block':'none';
+    fl.innerHTML=gpxTracks.map((t,i)=>`
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:10.5px">
+        <span style="flex:1;color:var(--text)"><b>${esc(t.name)}</b> <span style="color:var(--text3)">${t.pts.length} pts · ${(computeTrackLength(t.pts)/1000).toFixed(2)}km</span></span>
+        <button class="btn bd sm" style="padding:2px 8px;font-size:10px" onclick="removeGPXTrack(${i})">✕</button>
+      </div>`).join('');
+  }
+  const show=gpxTracks.length>0;
+  ['gpx-show-btn','gpx-sync-btn','snap-all-btn','gpx-clear-btn'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display=show?'':'none';});
+  const leg=document.getElementById('gpx-legend');if(leg)leg.style.display=show?'block':'none';
+  if(show){document.getElementById('gpx-show-btn').innerHTML=gpxTrackVisible?'<i class="fa fa-eye-slash"></i> Hide tracks':'<i class="fa fa-eye"></i> Show tracks';}
+}
+
+function removeGPXTrack(i){
+  gpxTracks.splice(i,1);saveGpxState();updateGPXUI();
+  relinkAllPolesFromGPX();              // drop pole data tied to this removed file
+  refreshMap();
+  toast('Track removed');
+}
+function computeTrackLength(pts){let d=0;for(let i=1;i<pts.length;i++)d+=haversine(pts[i-1].lat,pts[i-1].lng,pts[i].lat,pts[i].lng);return d;}
+function toggleGpxTrack(){
+  gpxTrackVisible=!gpxTrackVisible;
+  document.getElementById('gpx-show-btn').innerHTML=gpxTrackVisible?'<i class="fa fa-eye-slash"></i> Hide tracks':'<i class="fa fa-eye"></i> Show tracks';
+  refreshMap();
+}
+function clearGPX(){
+  if(!confirm('Clear all GPX tracks?\n\nPoles that received their GPS/span from these files will lose that data. Manually pinned poles are kept.'))return;
+  gpxTracks=[];saveGpxState();updateGPXUI();
+  relinkAllPolesFromGPX();              // wipes gpx-sourced GPS/span from all poles
+  refreshMap();toast('All tracks cleared');
+}
+function nearestTrackPoint(lat,lng){
+  const allPts=getAllGpxPts();
+  if(!allPts.length)return null;
+  let best=null,bestD=Infinity;
+  for(const pt of allPts){const d=haversine(lat,lng,pt.lat,pt.lng);if(d<bestD){bestD=d;best=pt;}}
+  return best?{point:best,dist:bestD}:null;
+}
+function snapPoleToTrack(poleId){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const pole=S.poles.find(p=>p.id===poleId);if(!pole)return;
+  if(!pole.lat){toast('⚠ Pole has no GPS. Use 📍 pin first.','#e74c3c');return;}
+  const near=nearestTrackPoint(pole.lat,pole.lng);if(!near){toast('⚠ Track empty');return;}
+  if(near.dist>100&&!confirm('Nearest track point is '+near.dist.toFixed(0)+'m away. Snap anyway?'))return;
+  pole.lat=near.point.lat;pole.lng=near.point.lng;pole.ele=near.point.ele!=null?+(+near.point.ele).toFixed(1):pole.ele??null;pole.acc=3;pole.gpsSource='twonav';pole.pinnedManually=false;
+  recalcAdjacentSpans(pole);pSet('poles',S.poles);
+  toast('🎯 '+pole.code+' snapped ('+near.dist.toFixed(1)+'m off)','#2e86de');if(navigator.vibrate)navigator.vibrate(40);
+  refreshMap();renderPoleList();
+}
+function snapAllPoles(){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const candidates=S.poles.filter(p=>p.lat);if(!candidates.length){toast('⚠ No poles with GPS yet');return;}
+  let snapped=0,farPoles=[];
+  candidates.forEach(p=>{const near=nearestTrackPoint(p.lat,p.lng);if(!near)return;if(near.dist>100){farPoles.push(p.code);return;}p.lat=near.point.lat;p.lng=near.point.lng;p.ele=near.point.ele!=null?+(+near.point.ele).toFixed(1):p.ele??null;p.acc=3;p.gpsSource='twonav';p.pinnedManually=false;snapped++;});
+  S.poles.forEach(p=>{if(p.gpsSource==='twonav')recalcAdjacentSpans(p);});
+  pSet('poles',S.poles);
+  toast('🎯 Snapped '+snapped+' pole(s)'+(farPoles.length?' · Skipped '+farPoles.length:''),'#2e86de');
+  refreshMap();renderPoleList();
+}
+function recalcAdjacentSpans(pole){
+  const idx=S.poles.indexOf(pole);
+  if(idx>0){const prev=S.poles[idx-1];if(prev.lat&&prev.lng&&pole.connectedToPrev!==false)pole.span=+haversine(prev.lat,prev.lng,pole.lat,pole.lng).toFixed(1);}
+  if(idx<S.poles.length-1){const nxt=S.poles[idx+1];if(nxt.lat&&nxt.lng&&nxt.connectedToPrev!==false)nxt.span=+haversine(pole.lat,pole.lng,nxt.lat,nxt.lng).toFixed(1);}
+}
+
+// ═══════════════════════════════════════════
+// SYNC POLES FROM GPX BY NAME MATCH
+// ═══════════════════════════════════════════
+function syncAllFromGPX(){
+  if(!gpxTracks.length){toast('⚠ Import GPX first','#e74c3c');return;}
+  const allPts=getAllGpxPts();
+  let linked=0,already=0,noMatch=0;
+  S.poles.forEach(pole=>{
+    const match=allPts.find(pt=>pt.name&&pt.name.trim()===pole.code);
+    if(!match){noMatch++;return;}
+    if(pole.lat&&pole.lng){already++;} // already has coords — update span only
+    pole.lat=+match.lat.toFixed(7);
+    pole.lng=+match.lng.toFixed(7);
+    pole.ele=match.ele!=null?+(+match.ele).toFixed(1):null;
+    pole.gpsSource='gpx';
+    recalcAdjacentSpans(pole);
+    linked++;
+  });
+  pSet('poles',S.poles);
+  const msg=`✅ Linked ${linked} pole(s) · ${already} updated · ${noMatch} unmatched`;
+  toast(msg,'#00a86b');
+  refreshMap();renderPoleList();
+}
+function populateSLDSels(){
+  const codes=S.poles.map(p=>p.code);
+  document.getElementById('sld-from').innerHTML='<option value="">From…</option>'+codes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('sld-to').innerHTML='<option value="">To…</option>'+codes.map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+function dominantCable(comps){
+  const cables=[{id:'cable_50_4c',label:'50mm²·4C'},{id:'cable_50_2c',label:'50mm²·2C'},{id:'cable_25_2c',label:'25mm²·2C'},{id:'conductor',label:'Cond.'}];
+  for(const cb of cables)if(comps[cb.id]>0)return cb.label;return'—';
+}
+function makeSym(id,cx,cy,col){
+  switch(id){
+    case'pole':return`<line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-8}" y1="${cy-4}" x2="${cx+8}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case'disc_insul':case'pin_insul':return`<circle cx="${cx}" cy="${cy}" r="6" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx-4}" y1="${cy}" x2="${cx+4}" y2="${cy}" stroke="${col}" stroke-width="1.5"/>`;
+    case'cross_arm':return`<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx}" y1="${cy-5}" x2="${cx}" y2="${cy+5}" stroke="${col}" stroke-width="2"/>`;
+    case'fuse_cutout':return`<rect x="${cx-4}" y="${cy-7}" width="8" height="14" rx="2" fill="none" stroke="${col}" stroke-width="2"/><line x1="${cx}" y1="${cy-10}" x2="${cx}" y2="${cy+10}" stroke="${col}" stroke-width="1.5" stroke-dasharray="2,2"/>`;
+    case'lightning_arr':return`<polygon points="${cx},${cy-10} ${cx+5},${cy} ${cx+2},${cy} ${cx+7},${cy+10} ${cx-7},${cy+1} ${cx-2},${cy+1}" fill="${col}" stroke="${col}" stroke-width="0.5"/>`;
+    case'lt_stay':return`<line x1="${cx-8}" y1="${cy-8}" x2="${cx+8}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    case'anchor_clamp':return`<rect x="${cx-7}" y="${cy-5}" width="14" height="10" rx="2" fill="none" stroke="${col}" stroke-width="2"/>`;
+    case'earth_rod':return`<line x1="${cx}" y1="${cy-9}" x2="${cx}" y2="${cy+9}" stroke="${col}" stroke-width="2.5"/><line x1="${cx-6}" y1="${cy+5}" x2="${cx+6}" y2="${cy+5}" stroke="${col}" stroke-width="2"/><line x1="${cx-3}" y1="${cy+8}" x2="${cx+3}" y2="${cy+8}" stroke="${col}" stroke-width="1.5"/>`;
+    case'connector_ipc':case'pg_clamp':return`<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="${col}" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="3" fill="${col}"/>`;
+    case'cable_25_2c':case'cable_50_2c':return`<line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="3" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="3" stroke-linecap="round"/>`;
+    case'cable_50_4c':return`<line x1="${cx-9}" y1="${cy-4}" x2="${cx+9}" y2="${cy-4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy}" x2="${cx+9}" y2="${cy}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+4}" x2="${cx+9}" y2="${cy+4}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><line x1="${cx-9}" y1="${cy+8}" x2="${cx+9}" y2="${cy+8}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>`;
+    default:return`<rect x="${cx-6}" y="${cy-6}" width="12" height="12" rx="2" fill="none" stroke="${col}" stroke-width="2"/>`;
+  }
+}
+function renderSLD(){
+  const host=document.getElementById('sld-canvas-wrap');
+  if(!S.poles.length){host.innerHTML='<div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">Record poles first, then press Draw</div>';return;}
+  const fromCode=document.getElementById('sld-from').value,toCode=document.getElementById('sld-to').value;
+  let poles=S.poles;
+  if(fromCode||toCode){const fi=fromCode?poles.findIndex(p=>p.code===fromCode):0,ti=toCode?poles.findIndex(p=>p.code===toCode):poles.length-1;if(fi>=0&&ti>=fi)poles=poles.slice(fi,ti+1);}
+  const estIds=new Set(S.components.filter(c=>c.est>0).map(c=>c.id));
+  const ZONE={pole:'mid',cross_arm:'arm',lightning_arr:'top',pin_insul:'top',disc_insul:'arm',pg_clamp:'arm',connector_ipc:'arm',fuse_cutout:'upper',anchor_clamp:'upper',susp_clamp:'upper',d_iron:'upper',i_bolt:'mid',lt_stay:'stay',stay_wire:'stay',earth_rod:'ground',conductor:'line',cable_25_2c:'line',cable_50_2c:'line',cable_50_4c:'line'};
+  const COL_W=120,PAD_L=50,LEGEND_H=28,PLATE_H=30,PLATE_W=COL_W-18,PLATE_Y=LEGEND_H+6,ARM_Y=PLATE_Y+PLATE_H+34,POLE_TOP=ARM_Y-20,POLE_BOT=ARM_Y+100,BUS_Y=ARM_Y,LBL_LIST_Y=POLE_BOT+22;
+  const maxLblRows=Math.max(0,...poles.map(p=>Object.values(p.components||{}).filter(v=>v>0).length));
+  const W=PAD_L+poles.length*COL_W+30,H=LBL_LIST_Y+maxLblRows*13+30;
+  // White background SLD for printability
+  let s=`<svg id="sld-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="min-width:${W}px;height:${H}px;background:#fff;display:block">`;
+  // Grid
+  for(let gx=0;gx<W;gx+=40)s+=`<line x1="${gx}" y1="0" x2="${gx}" y2="${H}" stroke="#f0f0f0" stroke-width="0.5"/>`;
+  for(let gy=0;gy<H;gy+=40)s+=`<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="#f0f0f0" stroke-width="0.5"/>`;
+  // Legend
+  s+=`<rect x="0" y="0" width="${W}" height="${LEGEND_H}" fill="#eaf2f8"/>`;
+  s+=`<rect x="8" y="9" width="10" height="10" rx="2" fill="${NEW_COL}"/><text x="22" y="18" fill="${NEW_COL}" font-size="9" font-family="Arial" font-weight="700">New / Field</text>`;
+  s+=`<rect x="100" y="9" width="10" height="10" rx="2" fill="${EST_COL}"/><text x="114" y="18" fill="${EST_COL}" font-size="9" font-family="Arial" font-weight="700">Estimated</text>`;
+  s+=`<text x="${W-6}" y="18" fill="#888" font-size="8" text-anchor="end" font-family="Arial">FieldGrid SLD — ${today()}</text>`;
+  // LT bus
+  const busX1=PAD_L,busX2=PAD_L+(poles.length-1)*COL_W;
+  s+=`<line x1="${busX1-10}" y1="${BUS_Y}" x2="${busX2+10}" y2="${BUS_Y}" stroke="${EST_COL}" stroke-width="2.5"/>`;
+  s+=`<text x="${busX1-14}" y="${BUS_Y-8}" fill="${EST_COL}" font-size="8" text-anchor="end" font-weight="700" font-family="Arial">LT SOURCE</text>`;
+  // Cable spans
+  poles.forEach((p,i)=>{
+    if(i===0)return;
+    const px=PAD_L+i*COL_W,ppx=PAD_L+(i-1)*COL_W,mid=(ppx+px)/2;
+    if(p.connectedToPrev===false){s+=`<line x1="${ppx}" y1="${BUS_Y}" x2="${px}" y2="${BUS_Y}" stroke="#ccc" stroke-width="1.5" stroke-dasharray="6,4"/>`;}
+    else{
+      s+=`<path d="M${ppx},${BUS_Y} Q${mid},${BUS_Y+8} ${px},${BUS_Y}" stroke="${NEW_COL}" stroke-width="2" fill="none" opacity="0.5"/>`;
+      const cb=dominantCable(p.components||{});
+      if(cb!=='—')s+=`<text x="${mid}" y="${BUS_Y+18}" fill="${NEW_COL}" font-size="7" text-anchor="middle" font-family="Arial">${esc(cb)}</text>`;
+      if(p.span)s+=`<text x="${mid}" y="${BUS_Y-10}" fill="#888" font-size="7" text-anchor="middle" font-family="Arial">${p.span}m</text>`;
+    }
+  });
+  // Each pole
+  poles.forEach((p,i)=>{
+    const px=PAD_L+i*COL_W;
+    const c=p.components||{};
+    const isExisting=p.poleType==='existing';
+    const poleCol=isExisting?'#aaa':EST_COL;
+    const dash=isExisting?' stroke-dasharray="5,3"':'';
+    const plX=px-PLATE_W/2;
+    s+=`<rect x="${plX}" y="${PLATE_Y}" width="${PLATE_W}" height="${PLATE_H}" rx="3" fill="#eaf2f8" stroke="${poleCol}" stroke-width="1.2"/>`;
+    s+=`<text x="${px}" y="${PLATE_Y+13}" fill="${EST_COL}" font-size="11" text-anchor="middle" font-weight="700" font-family="Arial">${esc(p.code)}</text>`;
+    if(p.location){const loc2=p.location.length>14?p.location.slice(0,13)+'…':p.location;s+=`<text x="${px}" y="${PLATE_Y+25}" fill="#5a6a7a" font-size="7" text-anchor="middle" font-family="Arial">${esc(loc2)}</text>`;}
+    s+=`<line x1="${px}" y1="${POLE_TOP}" x2="${px}" y2="${POLE_BOT}" stroke="${poleCol}" stroke-width="2.5" stroke-linecap="round"${dash}/>`;
+    if(Object.values(c).some(v=>v>0)){const armLen=22;s+=`<line x1="${px-armLen}" y1="${ARM_Y}" x2="${px+armLen}" y2="${ARM_Y}" stroke="${poleCol}" stroke-width="2.5" stroke-linecap="round"/>`;}
+    s+=`<line x1="${px-8}" y1="${POLE_BOT+3}" x2="${px+8}" y2="${POLE_BOT+3}" stroke="#8a6010" stroke-width="2"/>`;
+    s+=`<line x1="${px-5}" y1="${POLE_BOT+6}" x2="${px+5}" y2="${POLE_BOT+6}" stroke="#8a6010" stroke-width="1.5"/>`;
+    const compEntries=Object.entries(c).filter(e=>e[1]>0);
+    const zoneCount={top:0,arm:0,upper:0,mid:0,stay:0,ground:0,line:0};
+    compEntries.forEach(([cid,cnt])=>{
+      if(cid==='pole'||cid==='cross_arm')return;
+      const zone=ZONE[cid]||'mid',isEst=estIds.has(cid),col=isEst?EST_COL:NEW_COL,idx=zoneCount[zone]++;
+      const lat=(idx===0?0:(idx%2===1?-1:1)*Math.ceil(idx/2)*13);
+      let cx=px+lat,cy;
+      switch(zone){case'top':cy=ARM_Y-16;break;case'arm':cx=px+(idx===0?-9:idx===1?9:0);cy=ARM_Y;break;case'upper':cy=ARM_Y+20;break;case'mid':cy=ARM_Y+48;break;case'stay':cx=px+16;cy=ARM_Y+12;break;case'ground':cx=px+16;cy=POLE_BOT-5;break;case'line':cy=ARM_Y;cx=px-20;break;default:cy=ARM_Y+60;}
+      s+=makeSym(cid,cx,cy,col);
+      if(cnt>1)s+=`<text x="${cx+9}" y="${cy+4}" fill="${col}" font-size="7" font-weight="700" font-family="Arial">×${cnt}</text>`;
+    });
+    let listY=LBL_LIST_Y;
+    compEntries.forEach(([cid,cnt])=>{
+      const isEst=estIds.has(cid),col=isEst?EST_COL:NEW_COL;
+      const label=(S.components.find(cc=>cc.id===cid)?.name||cid).slice(0,14);
+      s+=`<text x="${px-PLATE_W/2+3}" y="${listY}" fill="${col}" font-size="7" font-family="Arial">${esc(label)} ×${cnt}</text>`;
+      listY+=11;
+    });
+  });
+  s+='</svg>';host.innerHTML=s;
+}
+function exportSVG(){
+  const svg=document.getElementById('sld-svg');if(!svg){toast('⚠ Draw SLD first');return;}
+  const blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='SLD_'+today()+'.svg';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('⬇ SVG saved');
+}
+function exportPDF(){
+  const svg=document.getElementById('sld-svg');if(!svg){toast('⚠ Draw SLD first');return;}
+  const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SLD</title><style>body{font-family:Arial,sans-serif;background:#fff;margin:0;padding:14px}h1{font-size:14px;color:#154360;margin-bottom:4px}.wrap{overflow-x:auto;border:1px solid #d5dce4;border-radius:6px;padding:8px}@page{size:A3 landscape;margin:.8cm}</style></head><body><h1>SLD — ${esc(proj)}</h1><div class="wrap">${svg.outerHTML}</div><script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body></html>`;
+  const blob=new Blob([html],{type:'text/html'});const url=URL.createObjectURL(blob);const w=window.open(url,'_blank');
+  if(!w){const a=document.createElement('a');a.href=url;a.download='SLD_'+today()+'.html';a.click();}
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+
+// ═══════════════════════════════════════════
+// PHOTOS PDF — all pole photos, one per page, with a Conota-style
+// info block in the BOTTOM-LEFT of each photo:
+//   Location name · Pole code · Components used · lat,lng,elevation · Date taken
+// ═══════════════════════════════════════════
+async function exportPhotosPDF(){
+  const withPhoto=S.poles.filter(p=>p.photo);
+  if(!withPhoto.length){toast('⚠ No pole photos recorded yet');return;}
+  toast('⏳ Building Photos PDF…');
+  try{
+    const loadScript=(src,globalName)=>new Promise((res,rej)=>{
+      if(window[globalName])return res(window[globalName]);
+      const s=document.createElement('script');s.src=src;
+      s.onload=()=>res(window[globalName]);
+      s.onerror=()=>rej(new Error('Failed to load '+src));
+      document.head.appendChild(s);
+    });
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js','jspdf');
+    const jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+    if(!jsPDFCtor){toast('⚠ PDF lib failed to load');return;}
+
+    const loadImg=src=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('image load failed'));im.src=src;});
+    const fmtDate=iso=>{
+      if(!iso)return '—';
+      const d=new Date(iso);if(isNaN(d))return iso.slice(0,16);
+      const z=n=>String(n).padStart(2,'0');
+      return z(d.getDate())+'.'+z(d.getMonth()+1)+'.'+d.getFullYear()+' '+z(d.getHours())+':'+z(d.getMinutes());
+    };
+
+    // Compose photo + info text on a canvas (Conota-camera style: bold white
+    // text with dark shadow, stacked in the bottom-left corner).
+    const compose=async p=>{
+      const img=await loadImg(p.photo);
+      const cv=document.createElement('canvas');
+      cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+      const c=cv.getContext('2d');
+      c.drawImage(img,0,0);
+
+      const W=cv.width,H=cv.height;
+      const fs=Math.max(12,Math.round(W/40));        // smaller, neater font size
+      const pad=Math.round(fs*0.9);
+      const lh=Math.round(fs*1.35);
+
+      // Build info lines
+      const comps=Object.entries(p.components||{}).filter(e=>e[1]>0)
+        .map(e=>{const n=S.components.find(x=>x.id===e[0])?.name||e[0];return n+' ×'+e[1];});
+      const compStr=comps.length?comps.join(', '):'—';
+      const gpsStr=(p.lat!=null?p.lat.toFixed(5):'—')+', '+(p.lng!=null?p.lng.toFixed(5):'—')
+                   +(p.ele!=null?' · '+(+p.ele).toFixed(0)+'m':'');
+      // Attractive font stack (falls back gracefully on any device)
+      const FF='"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif';
+      const bigFont='700 '+fs+'px '+FF;
+      const smallFont='500 '+Math.round(fs*0.78)+'px '+FF;
+      // Wrap long lines so they don't run off the photo
+      const maxW=W-pad*2-Math.round(fs*0.6);
+      const wrap=(text,font)=>{
+        c.font=font;const words=text.split(' ');const out=[];let line='';
+        words.forEach(w=>{const t=line?line+' '+w:w;if(c.measureText(t).width>maxW&&line){out.push(line);line=w;}else line=t;});
+        if(line)out.push(line);return out;
+      };
+      // Lines stacked bottom-up: [location(big), pole code(big), components(small, wrapped), gps(small), date(small)]
+      const lines=[
+        ...wrap(p.location||'—',bigFont).map(t=>({t,f:bigFont,h:lh})),
+        {t:'Pole: '+(p.code||'—'),f:bigFont,h:lh},
+        ...wrap('Components: '+compStr,smallFont).map(t=>({t,f:smallFont,h:Math.round(lh*0.82)})),
+        {t:gpsStr,f:smallFont,h:Math.round(lh*0.82)},
+        {t:fmtDate(p.recordedAt),f:smallFont,h:Math.round(lh*0.82)}
+      ];
+      const blockH=lines.reduce((a,l)=>a+l.h,0)+pad*1.5;
+
+      // Subtle dark gradient behind text for readability
+      const grad=c.createLinearGradient(0,H-blockH-pad*2,0,H);
+      grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(0,0,0,0.6)');
+      c.fillStyle=grad;c.fillRect(0,H-blockH-pad*2,W,blockH+pad*2);
+
+      // NEA-yellow accent bar to the left of the info block (Conota-style polish)
+      c.fillStyle='#ffce00';
+      c.fillRect(Math.round(pad*0.35),H-blockH-Math.round(pad*0.4),Math.max(2,Math.round(fs*0.18)),blockH);
+
+      // Draw lines bottom-left, bottom-up (slight letter-spacing where supported)
+      try{c.letterSpacing='0.5px';}catch(e){}
+      c.textAlign='left';c.textBaseline='alphabetic';
+      c.shadowColor='rgba(0,0,0,0.85)';c.shadowBlur=Math.round(fs*0.22);
+      c.shadowOffsetX=1;c.shadowOffsetY=1;
+      c.fillStyle='#ffffff';
+      const tx=pad+Math.round(fs*0.35);
+      let y=H-pad;
+      for(let i=lines.length-1;i>=0;i--){
+        c.font=lines[i].f;
+        c.fillText(lines[i].t,tx,y);
+        y-=lines[i].h;
+      }
+      c.shadowColor='transparent';
+      try{c.letterSpacing='0px';}catch(e){}
+      return {dataURL:cv.toDataURL('image/jpeg',0.85),w:W,h:H};
+    };
+
+    // A4 portrait, one photo per page, fitted with margins
+    const pdf=new jsPDFCtor({orientation:'p',unit:'mm',format:'a4'});
+    const PW=210,PH=297,M=10;
+    for(let i=0;i<withPhoto.length;i++){
+      const p=withPhoto[i];
+      let comp;
+      try{comp=await compose(p);}catch(e){continue;}
+      if(i>0)pdf.addPage();
+      // Fit image inside printable area, centered
+      const availW=PW-M*2,availH=PH-M*2-8;       // leave 8mm for the page caption
+      const scale=Math.min(availW/comp.w,availH/comp.h);
+      const w=comp.w*scale,h=comp.h*scale;
+      const x=(PW-w)/2,y=M+ (availH-h)/2;
+      pdf.addImage(comp.dataURL,'JPEG',x,y,w,h);
+      // Small caption under the photo
+      pdf.setFont('helvetica','bold');pdf.setFontSize(9);pdf.setTextColor(21,67,96);
+      pdf.text((i+1)+' / '+withPhoto.length+' — '+(p.code||'')+' · '+(p.location||''),PW/2,PH-M+4,{align:'center'});
+    }
+
+    const locations=[...new Set(S.poles.map(p=>p.location).filter(Boolean))];
+    const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+    const base=(locations.join('_')||proj).replace(/[^A-Za-z0-9\u0900-\u097F]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80);
+    pdf.save('Photos_'+base+'_'+today()+'.pdf');
+    toast('⬇ Photos PDF exported ('+withPhoto.length+' photos)','#00a86b');
+  }catch(e){toast('⚠ Photos PDF failed: '+e.message.slice(0,60),'#e74c3c');}
+}
+
+// ═══════════════════════════════════════════
+// MAP PDF DOWNLOAD
+// ═══════════════════════════════════════════
+async function downloadMapPDF(){
+  if(!leafletMap){toast('⚠ Open map first');return;}
+  if(!gpxTracks.length){toast('⚠ Import a GPX track first');return;}
+  toast('⏳ Generating PDF…');
+  await new Promise(r=>setTimeout(r,300));
+  try{
+    const loadScript=(src,globalName)=>new Promise((res,rej)=>{
+      if(window[globalName])return res(window[globalName]);
+      const s=document.createElement('script');s.src=src;
+      s.onload=()=>res(window[globalName]);
+      s.onerror=()=>rej(new Error('Failed to load '+src));
+      document.head.appendChild(s);
+    });
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js','jspdf');
+    const jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+    if(!jsPDFCtor){toast('⚠ PDF lib failed to load');return;}
+
+    const mapEl=document.getElementById('pole-map');
+    const mapRect=mapEl.getBoundingClientRect();
+    const W=Math.round(mapRect.width), H=Math.round(mapRect.height);
+    const DPR=2; // render at 2× for crisp output
+    const zoom=leafletMap.getZoom();
+    const trackColors=['#2e86de','#e74c3c','#8e44ad','#f39c12','#16a085','#2c3e50'];
+
+    // lat/lng → container pixel (the SAME projection the live map uses → perfect alignment)
+    const P=(lat,lng)=>leafletMap.latLngToContainerPoint([lat,lng]);
+
+    // Draws route polylines + waypoint dots + name labels + span labels onto a context.
+    // Mirrors refreshMap() exactly so the PDF matches the on-screen map.
+    function drawVectors(c){
+      if(!gpxTrackVisible)return;
+      gpxTracks.forEach((track,ti)=>{
+        const pts=track.pts; if(!pts.length)return;
+        const tCol=trackColors[ti%trackColors.length];
+        c.lineJoin='round'; c.lineCap='round';
+        // route shadow
+        c.strokeStyle='rgba(0,0,0,0.25)'; c.lineWidth=6; c.beginPath();
+        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
+        c.stroke();
+        // route colour
+        c.strokeStyle=tCol; c.globalAlpha=0.85; c.lineWidth=3; c.beginPath();
+        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
+        c.stroke(); c.globalAlpha=1;
+        // ── Location name label below midpoint of the track ──
+        if(pts.length>1){
+          const midPt=pts[Math.floor(pts.length/2)];
+          const mp=P(midPt.lat,midPt.lng);
+          const locLabel=locationForGpxName(track.name)||track.name;
+          c.font='700 9px Arial,Helvetica,sans-serif';
+          c.textBaseline='top'; c.textAlign='center';
+          c.lineWidth=3; c.strokeStyle='rgba(255,255,255,0.9)'; c.lineJoin='round';
+          c.strokeText(locLabel,mp.x,mp.y+8);
+          c.fillStyle=tCol; c.globalAlpha=0.9; c.fillText(locLabel,mp.x,mp.y+8); c.globalAlpha=1;
+        }
+      });
+      if(zoom<15)return;
+      gpxTracks.forEach((track)=>{
+        const pts=track.pts; if(!pts.length)return;
+        const candidates=[];
+        pts.forEach((pt,i)=>{const nm=(pt.name||'').trim(); if(nm)candidates.push({pt,i,nm});});
+        const maxLabels=zoom>=17?200:zoom>=16?80:30;
+        const lblStep=Math.max(1,Math.ceil(candidates.length/maxLabels));
+        // dots + name labels
+        candidates.forEach((cd,ci)=>{
+          const showLbl=(ci%lblStep===0)||ci===0||ci===candidates.length-1;
+          const p=P(cd.pt.lat,cd.pt.lng);
+          c.beginPath(); c.arc(p.x,p.y,3,0,Math.PI*2);
+          c.fillStyle='#111'; c.globalAlpha=0.85; c.fill();
+          c.globalAlpha=1; c.lineWidth=1; c.strokeStyle='#111'; c.stroke();
+          if(showLbl){
+            c.font='700 11px Arial,Helvetica,sans-serif';
+            c.textBaseline='middle'; c.textAlign='left';
+            c.lineWidth=3; c.strokeStyle='#fff'; c.lineJoin='round';
+            c.strokeText(cd.nm,p.x+7,p.y);
+            c.fillStyle='#111'; c.fillText(cd.nm,p.x+7,p.y);
+          }
+        });
+        // span labels
+        if(zoom>=16){
+          for(let k=1;k<candidates.length;k++){
+            const a=candidates[k-1], b=candidates[k];
+            if(b.i-a.i>5)continue;
+            const segDist=haversine(a.pt.lat,a.pt.lng,b.pt.lat,b.pt.lng);
+            if(segDist<3)continue;
+            const mLat=(a.pt.lat+b.pt.lat)/2, mLng=(a.pt.lng+b.pt.lng)/2;
+            const p=P(mLat,mLng), label=segDist.toFixed(0)+'m';
+            c.font='700 10px Arial,Helvetica,sans-serif';
+            c.textBaseline='middle'; c.textAlign='center';
+            c.lineWidth=3; c.strokeStyle='#fff'; c.lineJoin='round';
+            c.strokeText(label,p.x,p.y);
+            c.fillStyle='#1a1a1a'; c.fillText(label,p.x,p.y);
+          }
+        }
+      });
+    }
+
+    // ── Build the composite canvas: tiles first, then vectors + labels on top ──
+    const cv=document.createElement('canvas');
+    cv.width=W*DPR; cv.height=H*DPR;
+    const ctx=cv.getContext('2d');
+    ctx.scale(DPR,DPR);
+    ctx.fillStyle='#e9e5dc'; ctx.fillRect(0,0,W,H);
+
+    // Composite each loaded tile at its real on-screen position (read from the DOM).
+    const tiles=Array.from(mapEl.querySelectorAll('.leaflet-tile-pane img.leaflet-tile'));
+    tiles.forEach(img=>{
+      try{
+        if(!img.complete||img.naturalWidth===0)return;
+        const r=img.getBoundingClientRect();
+        const op=parseFloat(img.style.opacity||'1');
+        ctx.globalAlpha=isNaN(op)?1:op;
+        ctx.drawImage(img, r.left-mapRect.left, r.top-mapRect.top, r.width, r.height);
+        ctx.globalAlpha=1;
+      }catch(_){}
+    });
+
+    drawVectors(ctx);
+
+    // Export → if a cross-origin tile tainted the canvas, fall back to a clean white render.
+    let imgData;
+    try{
+      imgData=cv.toDataURL('image/jpeg',0.92);
+    }catch(taintErr){
+      const cv2=document.createElement('canvas'); cv2.width=cv.width; cv2.height=cv.height;
+      const c2=cv2.getContext('2d'); c2.scale(DPR,DPR);
+      c2.fillStyle='#ffffff'; c2.fillRect(0,0,W,H);
+      drawVectors(c2);
+      imgData=cv2.toDataURL('image/jpeg',0.92);
+      toast('ℹ Basemap skipped (tile CORS) — route & labels saved','#e67e22');
+    }
+
+    // ── Place onto an A4 page, preserving the on-screen aspect ratio ──
+    const isLandscape=W>H;
+    const pdf=new jsPDFCtor({orientation:isLandscape?'l':'p',unit:'mm',format:'a4'});
+    const pageW=pdf.internal.pageSize.getWidth();
+    const pageH=pdf.internal.pageSize.getHeight();
+    const margin=8, titleH=10;
+    const availW=pageW-margin*2, availH=pageH-margin*2-titleH;
+    const aspect=W/H;
+    let drawW=availW, drawH=availW/aspect;
+    if(drawH>availH){drawH=availH; drawW=availH*aspect;}
+    const x=margin+(availW-drawW)/2, y=margin+titleH+(availH-drawH)/2;
+
+    const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(11);
+    pdf.text('FieldGrid — '+proj,margin,margin+5);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(9);
+    pdf.text(today(),pageW-margin,margin+5,{align:'right'});
+
+    pdf.addImage(imgData,'JPEG',x,y,drawW,drawH,undefined,'FAST');
+    // Filename = the location(s) the visible GPX file(s) match. If a track's
+    // filename matches a recorded location use that location; otherwise use the
+    // raw filename. Multiple tracks are joined with ', '.
+    const fnLoc=(gpxTracks||[]).map(t=>locationForGpxName(t.name)||t.name).filter(Boolean);
+    const baseLoc=fnLoc.length?fnLoc.join(', '):(getProjs().find(p=>p.id===CUR)?.name||'Map');
+    const safe=baseLoc.replace(/[\\/:*?"<>|]+/g,'_').slice(0,80);
+    pdf.save(safe+'.pdf');
+    toast('⬇ PDF saved','#00a86b');
+  }catch(e){toast('⚠ '+e.message.slice(0,70));}
+}
+
+// ═══════════════════════════════════════════
+// REPORT
+// ═══════════════════════════════════════════
+function renderReport(){
+  const tot={};S.components.forEach(c=>tot[c.id]=0);
+  S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
+  const span=S.poles.reduce((a,p)=>a+(p.span||0),0);
+  const areas=new Set(S.poles.map(p=>p.location).filter(Boolean));
+  document.getElementById('r-poles').textContent=S.poles.length;
+  document.getElementById('r-span').textContent=span.toFixed(0)+'m';
+  document.getElementById('r-comps').textContent=Object.values(tot).reduce((a,b)=>a+b,0);
+  document.getElementById('r-areas').textContent=areas.size;
+  const bomRows=S.components.filter(c=>tot[c.id]>0||c.est>0).map(c=>{
+    const used=tot[c.id]||0,est=c.est||0;
+    const badge=est===0?'<span class="badge">—</span>':used>est?`<span class="badge ov">+${used-est} OVER</span>`:used<est?`<span class="badge un">${est-used} LEFT</span>`:'<span class="badge ok">✓ EXACT</span>';
+    return`<tr><td>${esc(c.name)}</td><td>${esc(c.unit)}</td><td style="text-align:right">${est||'—'}</td><td style="text-align:right;color:var(--success)">${used}</td><td>${badge}</td></tr>`;
+  }).join('');
+  document.getElementById('bom-tbl').innerHTML=bomRows?`<table><thead><tr><th>Component</th><th>Unit</th><th>Estimate</th><th>Field (Qty)</th><th>Status</th></tr></thead><tbody>${bomRows}</tbody></table>`:'<div class="empty">No component usage</div>';
+  const schRows=S.poles.map((p,i)=>`<tr><td>${i+1}</td><td><b>${esc(p.code)}</b></td><td>${esc(p.location||'—')}</td><td>${p.ele!=null?p.ele+'m':'—'}</td><td>${p.span?p.span+'m':'—'}</td><td style="font-size:9px">${p.lat?p.lat.toFixed(5)+'<br>'+p.lng.toFixed(5):'—'}</td><td>${p.acc?'±'+p.acc.toFixed(1)+'m':'—'}</td></tr>`).join('');
+  document.getElementById('sched-tbl').innerHTML=schRows?`<table><thead><tr><th>#</th><th>Code</th><th>Location</th><th>Elev</th><th>Span</th><th>GPS</th><th>Acc</th></tr></thead><tbody>${schRows}</tbody></table>`:'<div class="empty">No poles recorded</div>';
+}
+
+// ═══════════════════════════════════════════
+// EXCEL EXPORT — SDS-ready for re-import
+// ═══════════════════════════════════════════
+function autoFitSheet(ws){
+  // Compute max char width per column across all cells
+  const ref=ws['!ref'];if(!ref)return;
+  const range=XLSX.utils.decode_range(ref);
+  const colWidths=[];
+  for(let C=range.s.c;C<=range.e.c;C++){
+    let maxW=8;
+    for(let R=range.s.r;R<=range.e.r;R++){
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(cell&&cell.v!=null){
+        const len=String(cell.v).length;
+        if(len>maxW)maxW=len;
+      }
+    }
+    colWidths.push({wch:Math.min(maxW+2,40)});
+  }
+  ws['!cols']=colWidths;
+}
+function centerSheet(ws){
+  const ref=ws['!ref'];if(!ref)return;
+  const range=XLSX.utils.decode_range(ref);
+  for(let R=range.s.r;R<=range.e.r;R++){
+    for(let C=range.s.c;C<=range.e.c;C++){
+      const addr=XLSX.utils.encode_cell({r:R,c:C});
+      if(!ws[addr])continue;
+      if(!ws[addr].s)ws[addr].s={};
+      ws[addr].s.alignment={horizontal:'center',vertical:'center',wrapText:true};
+    }
+  }
+}
+async function expXLSX(){
+  if(!S.poles.length&&!S.components.length){toast('⚠ No data');return;}
+  if(typeof ExcelJS==='undefined'){toast('⚠ Excel engine still loading, try again');return;}
+  toast('⏳ Building Excel…');
+
+  // ── Totals per component across all poles ──
+  const tot={};S.components.forEach(c=>tot[c.id]=0);
+  S.poles.forEach(p=>Object.entries(p.components||{}).forEach(([k,v])=>{if(tot[k]!==undefined)tot[k]+=v;}));
+  const usedComps=S.components.filter(c=>(tot[c.id]||0)>0||(c.est||0)>0);
+  const usedIds=usedComps.map(c=>c.id);
+  const usedNames=usedComps.map(c=>c.name);
+  const proj=getProjs().find(p=>p.id===CUR)?.name||'Survey';
+  const locations=[...new Set(S.poles.map(p=>p.location).filter(Boolean))];
+  const dateStr=today();
+
+  // ── Style helpers (ExcelJS) ──
+  const BT={style:'thin',color:{argb:'FF000000'}};
+  const BM={style:'medium',color:{argb:'FF000000'}};
+  const BTK={style:'thick',color:{argb:'FF000000'}};
+  const F12={name:'Calibri',size:12};
+  const F12B={name:'Calibri',size:12,bold:true};
+  const F14B={name:'Calibri',size:14,bold:true};
+  const CEN={horizontal:'center',vertical:'middle',wrapText:true};
+  const thinAll={top:BT,left:BT,bottom:BT,right:BT};
+  const tableStyle=(ws,r0,r1,c0,c1,headerRows)=>{
+    for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){
+      const cell=ws.getCell(r,c);
+      cell.font=(headerRows&&headerRows.includes(r))?F12B:F12;
+      cell.alignment=CEN; cell.border=thinAll;
+    }
+  };
+  // Convert 1-based column index to Excel letters (A, B, ..., Z, AA, AB, ...)
+  const colL=n=>{let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26);}return s;};
+
+  const wb=new ExcelJS.Workbook();
+
+  // ════════════════════════════════════════════════════════════════════
+  // SHEET 1 — RECONCILATION SHEET (was "SDS"; Difference & Status are FORMULAS)
+  // Columns: A=SN B=Description C=Unit D=Est.Qty E=Field Qty F=Difference G=Status H=Remarks
+  // ════════════════════════════════════════════════════════════════════
+  const sds=wb.addWorksheet('Reconcilation Sheet');
+  sds.columns=[{width:6},{width:36},{width:8},{width:12},{width:14},{width:12},{width:10},{width:18}];
+
+  const sdsTitles=[
+    'NEPAL ELECTRICITY AUTHORITY',
+    'Distribution and Consumer Services Directorate',
+    'Lumbini Provincial Office, Butwal',
+    'Taulihawa Distribution Center',
+    'FY: 2082/83',
+    'Works At: '+locations.join(', '),
+    'RECONCILATION SHEET'
+  ];
+  sdsTitles.forEach((t,i)=>{sds.addRow([t,'','','','','','','']);sds.mergeCells(i+1,1,i+1,8);});
+  sds.addRow(['','','','','','','','']);                            // row 8 = gap row
+  sds.addRow(['S.N.','Description of Item','Unit','Est. Qty','Field Qty (Actual)','Difference','Status','Remarks']); // row 9 = header
+
+  // Data rows with FORMULAS for Difference (= E-D) and Status (= IF chain on F)
+  const sdsFirstData=10;
+  usedComps.forEach((c,i)=>{
+    const e=c.est||0, q=tot[c.id]||0;
+    const r=sdsFirstData+i;
+    sds.addRow([i+1,c.name,c.unit,e||0,q,null,null,'']);
+    sds.getCell(r,6).value={formula:`E${r}-D${r}`};
+    sds.getCell(r,7).value={formula:`IF(D${r}=0,"—",IF(F${r}>0,"OVER",IF(F${r}<0,"UNDER","EXACT")))`};
+  });
+  // TOTAL row — bold + THICK border. Diff is a formula too.
+  const sdsTotalRowNum=sds.rowCount+1;
+  sds.addRow(['','TOTAL','',{formula:`SUM(D${sdsFirstData}:D${sdsTotalRowNum-1})`},{formula:`SUM(E${sdsFirstData}:E${sdsTotalRowNum-1})`},{formula:`E${sdsTotalRowNum}-D${sdsTotalRowNum}`},'','']);
+  const sdsTotalRow=sds.getRow(sdsTotalRowNum);
+  sdsTotalRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font=F12B; cell.alignment=CEN;
+    cell.border={top:BTK,left:BTK,bottom:BTK,right:BTK};
+  });
+
+  sds.getRow(1).height=18.75; sds.getRow(8).height=16.5;
+  // Title block (rows 1-7) — medium outer border on 8 cols
+  const sdsTitleStyle=(r,bold,size)=>{for(let c=1;c<=8;c++){const cell=sds.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===8?BM:undefined};}};
+  sdsTitleStyle(1,true,14);[2,3,4,5].forEach(r=>sdsTitleStyle(r,false,12));sdsTitleStyle(6,true,12);sdsTitleStyle(7,true,12);
+  for(let c=1;c<=8;c++){const cell=sds.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===8?BM:undefined};}
+  // Data area: thin borders, bold header row
+  tableStyle(sds,9,sdsTotalRowNum-1,1,8,[9]);
+
+  // ════════════════════════════════════════════════════════════════════
+  // SHEET 2 — VERIFICATION SHEET (was "Pole Schedule")
+  // Elevation column added (from GPX <ele>); Photo column REMOVED — photos
+  // are exported separately as a PDF from the Report page.
+  // ════════════════════════════════════════════════════════════════════
+  const sch=wb.addWorksheet('Verification Sheet');
+
+  // Trim component columns to those actually used
+  const compColsToKeep=usedIds.map((id,ci)=>S.poles.some(p=>(p.components?.[id]||0)>0)?ci:null).filter(ci=>ci!==null);
+  const compNames=compColsToKeep.map(ci=>usedNames[ci]);
+  const compIds=compColsToKeep.map(ci=>usedIds[ci]);
+  // Final column order:
+  //   1 SN  2 Pole Code  3 Location  4 Latitude  5 Longitude  6 Elevation (m)
+  //   7 Span (m)  8 Total Span  9 Cable Connected  10 Recorded At
+  //   11..(10+N) Components   (11+N) Remarks
+  const hdr=['SN','Pole Code','Location / Area','Latitude','Longitude','Elevation (m)','Span (m)','Total Span (m)','Cable Connected','Recorded At',...compNames,'Remarks'];
+  const TOTAL_COLS=hdr.length;
+  const SPAN_COL=7, TOTSPAN_COL=8, COMP_START=11;
+
+  // ── Title block (rows 1-7) + gap (row 8), mirroring the Reconcilation Sheet ──
+  const schTitles=[
+    'NEPAL ELECTRICITY AUTHORITY',
+    'Distribution and Consumer Services Directorate',
+    'Lumbini Provincial Office, Butwal',
+    'Taulihawa Distribution Center',
+    'FY: 2082/83',
+    'Works At: '+locations.join(', '),
+    'VERIFICATION SHEET'
+  ];
+  schTitles.forEach((t,i)=>{
+    const arr=Array(TOTAL_COLS).fill(''); arr[0]=t;
+    sch.addRow(arr); sch.mergeCells(i+1,1,i+1,TOTAL_COLS);
+  });
+  sch.addRow(Array(TOTAL_COLS).fill(''));                              // row 8 gap
+
+  // ── Row 9: note row (replaces the old editable span-multiplier cell). ──
+  // Total Span is now computed per-row from the cable/conductor counts —
+  // see the formula construction at the data rows below. Keeping this row
+  // preserves the layout so the header still lands on ROW 11.
+  const noteRowNum=9;
+  const noteRow=Array(TOTAL_COLS).fill('');
+  noteRow[0]='Total Span (m) = Span × matching ABC Cable / ACSR Conductor count (counted only when this pole and the pole above record the same number — i.e. the run continues).';
+  sch.addRow(noteRow);
+  sch.mergeCells(noteRowNum,1,noteRowNum,TOTAL_COLS);
+  {
+    const cell=sch.getCell(noteRowNum,1);
+    cell.font={name:'Calibri',size:10,italic:true,color:{argb:'FF5A6A7A'}};
+    cell.alignment={horizontal:'left',vertical:'middle',wrapText:true};
+    cell.border=thinAll;
+  }
+  sch.addRow(Array(TOTAL_COLS).fill(''));                              // row 10 gap
+
+  // ── Data table starts at row 11: header + body ──
+  const HEADER_ROW=11;
+  // Header row: assign cell-by-cell so we land in columns A..N exactly.
+  hdr.forEach((h,i)=>{ sch.getCell(HEADER_ROW, i+1).value = h; });
+
+  let spanTotal=0; const compTotals=compIds.map(()=>0);
+  const firstDataRow=HEADER_ROW+1;
+  // ── Cable/conductor columns drive the Total Span calculation. ──
+  // 1-based sheet columns whose ROW-11 header name contains 'ABC Cable' or 'ACSR Conductor'.
+  const cableCols=compNames
+    .map((n,k)=>/abc\s*cable|acsr\s*conductor/i.test(n)?COMP_START+k:null)
+    .filter(ci=>ci!==null);
+  S.poles.forEach((p,i)=>{
+    if(p.span)spanTotal+=p.span;
+    const compVals=compIds.map((id,k)=>{const v=p.components?.[id]||0;compTotals[k]+=v;return v;});
+    const rowNum=firstDataRow+i;
+    const rowVals=[
+      i+1,                                                   // A SN
+      p.code,                                                // B Code
+      p.location||'',                                        // C Location
+      p.lat!=null?+p.lat.toFixed(6):'',                      // D Lat
+      p.lng!=null?+p.lng.toFixed(6):'',                      // E Lng
+      p.ele!=null?+(+p.ele).toFixed(1):'',                   // F Elevation (from GPX)
+      p.span||0,                                             // G Span
+      null,                                                  // H Total Span — set below as formula
+      i===0?'SOURCE':p.connectedToPrev===true?'YES':p.connectedToPrev===false?'NO':'',  // I Cable
+      p.recordedAt?p.recordedAt.replace('T',' ').slice(0,16):'',                        // J Recorded
+      ...compVals,                                           // components
+      p.remarks||''                                          // Remarks (last)
+    ];
+    const row=sch.addRow(rowVals);
+    // Total Span = Span × Σ over cable/conductor columns of the count in THIS row,
+    // counted ONLY when the cell directly above (previous pole) holds the SAME number
+    // — i.e. the cable run continues across this span. For the first data row the
+    // cell above is the header text, so nothing matches (source pole → 0, as it should).
+    if(cableCols.length){
+      const terms=cableCols.map(ci=>`IF(${colL(ci)}${rowNum}=${colL(ci)}${rowNum-1},N(${colL(ci)}${rowNum}),0)`).join('+');
+      sch.getCell(rowNum,TOTSPAN_COL).value={formula:`${colL(SPAN_COL)}${rowNum}*(${terms})`};
+    }else{
+      // No ABC Cable / ACSR Conductor columns in use → Total Span falls back to Span.
+      sch.getCell(rowNum,TOTSPAN_COL).value={formula:`${colL(SPAN_COL)}${rowNum}`};
+    }
+  });
+
+  // ── TOTAL row ── sums Span and Total Span; sums component columns; leaves text columns blank
+  const totalRowNum=sch.rowCount+1;
+  const totalArr=Array(TOTAL_COLS).fill('');
+  totalArr[1]='TOTAL';
+  totalArr[SPAN_COL-1]={formula:`SUM(${colL(SPAN_COL)}${firstDataRow}:${colL(SPAN_COL)}${totalRowNum-1})`};
+  totalArr[TOTSPAN_COL-1]={formula:`SUM(${colL(TOTSPAN_COL)}${firstDataRow}:${colL(TOTSPAN_COL)}${totalRowNum-1})`};
+  compIds.forEach((_,k)=>{
+    const ci=COMP_START+k;                               // 1-based component column
+    totalArr[ci-1]={formula:`SUM(${colL(ci)}${firstDataRow}:${colL(ci)}${totalRowNum-1})`};
+  });
+  sch.addRow(totalArr);
+  // Thick-border + bold the TOTAL row
+  const totalRow=sch.getRow(totalRowNum);
+  totalRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font=F12B; cell.alignment=CEN;
+    cell.border={top:BTK,left:BTK,bottom:BTK,right:BTK};
+  });
+
+  // ── Last row — "Considering +5% for sag" ──
+  // A:G merged = label · H:J merged = TOTAL Total-Span × 1.05 (single value, no range).
+  const sagRowNum=totalRowNum+1;
+  const sagArr=Array(TOTAL_COLS).fill('');
+  sagArr[0]='Considering +5% for sag';
+  sagArr[TOTSPAN_COL-1]={formula:`ROUND(${colL(TOTSPAN_COL)}${totalRowNum}*1.05,2)`};
+  sch.addRow(sagArr);
+  sch.mergeCells(sagRowNum,1,sagRowNum,SPAN_COL);                          // A:G — label
+  sch.mergeCells(sagRowNum,TOTSPAN_COL,sagRowNum,Math.min(TOTSPAN_COL+2,TOTAL_COLS)); // H:J — value
+  const sagRow=sch.getRow(sagRowNum);
+  sagRow.eachCell({includeEmpty:true},(cell)=>{
+    cell.font={name:'Calibri',size:11,italic:true,bold:true};
+    cell.alignment=CEN; cell.border=thinAll;
+    cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEFF6FB'}};
+  });
+  sch.getCell(sagRowNum,1).alignment={horizontal:'right',vertical:'middle',wrapText:true};
+
+  // ── Column widths ──
+  sch.columns=[
+    {width:5},{width:12},{width:22},{width:13},{width:13},{width:12},{width:9},{width:12}, // SN..Total Span (incl. Elevation)
+    {width:14},{width:17},                                                       // Cable, Recorded
+    ...compNames.map(()=>({width:18})),                                          // components
+    {width:24}                                                                   // Remarks (wider, last)
+  ];
+
+  // ── Style title block (rows 1-7 + gap row 8), mirroring SDS ──
+  sch.getRow(1).height=18.75; sch.getRow(8).height=16.5; sch.getRow(noteRowNum).height=30;
+  const schTitleStyle=(r,bold,size)=>{for(let c=1;c<=TOTAL_COLS;c++){const cell=sch.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===TOTAL_COLS?BM:undefined};}};
+  schTitleStyle(1,true,14);[2,3,4,5].forEach(r=>schTitleStyle(r,false,12));schTitleStyle(6,true,12);schTitleStyle(7,true,12);
+  for(let c=1;c<=TOTAL_COLS;c++){const cell=sch.getCell(8,c);cell.font=F12;cell.alignment=CEN;cell.border={bottom:BM,left:c===1?BM:undefined,right:c===TOTAL_COLS?BM:undefined};}
+
+  // ── Style the data table (header + body, thin all-around) ──
+  tableStyle(sch,HEADER_ROW,totalRowNum-1,1,TOTAL_COLS,[HEADER_ROW]);
+
+  // (Photo column removed — site photos are exported separately as a PDF from the Report page.)
+
+  // ── Write & download ── (file is named from the LOCATION(s), not the project)
+  try{
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    const locBase=(locations.join('_')||proj).replace(/[^A-Za-z0-9\u0900-\u097F]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80);
+    a.download=locBase+'_'+dateStr+'.xlsx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast('⬇ Excel exported','#00a86b');
+  }catch(e){toast('⚠ Export failed: '+e.message.slice(0,50));}
+}
+
+
+// ═══════════════════════════════════════════
+// SETUP PAGE EXPORT — components & locations in the Estimate sheet layout
+// (locations placed in ROW 6 exactly as in the official Estimate file)
+// ═══════════════════════════════════════════
+async function exportSetupXLSX(){
+  if(!S.components.length&&!S.locations.length){toast('⚠ Nothing to export — add components / locations first');return;}
+  if(typeof ExcelJS==='undefined'){toast('⚠ Excel engine still loading, try again');return;}
+  toast('⏳ Building Excel…');
+  const BT={style:'thin',color:{argb:'FF000000'}};
+  const BM={style:'medium',color:{argb:'FF000000'}};
+  const CEN={horizontal:'center',vertical:'middle',wrapText:true};
+  const thinAll={top:BT,left:BT,bottom:BT,right:BT};
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Estimate');
+  ws.columns=[{width:6},{width:42},{width:10},{width:10},{width:18}];
+  const locStr=S.locations.filter(l=>l&&l.trim()).join(', ');
+  const titles=[
+    'NEPAL ELECTRICITY AUTHORITY',
+    'Distribution and Consumer Services Directorate',
+    'Lumbini Provincial Office, Butwal',
+    'Taulihawa Distribution Center',
+    'FY:-2082/083',
+    'Location: '+locStr               // ── ROW 6, just like the Estimate sheet ──
+  ];
+  titles.forEach((t,i)=>{ws.addRow([t,'','','','']);ws.mergeCells(i+1,1,i+1,5);});
+  ws.addRow(['S.N.','Description of item','Unit','Qty','Remarks']);   // row 7 header
+  const firstData=8;
+  S.components.filter(c=>c.name&&c.name.trim()).forEach((c,i)=>{
+    ws.addRow([i+1,c.name,c.unit||'',c.est||'','']);
+  });
+  const lastData=ws.rowCount;
+  ws.addRow(['','','','','']);
+  ws.addRow(['Contractor Signature','','Site Incharge','','Engineer']);
+  // ── Styling ──
+  const tStyle=(r,bold,size)=>{for(let c=1;c<=5;c++){const cell=ws.getCell(r,c);cell.font={name:'Calibri',size:size||12,bold:!!bold};cell.alignment=CEN;cell.border={top:r===1?BM:undefined,left:c===1?BM:undefined,right:c===5?BM:undefined};}};
+  tStyle(1,true,14);[2,3,4,5].forEach(r=>tStyle(r,false,12));tStyle(6,true,12);
+  for(let r=7;r<=lastData;r++)for(let c=1;c<=5;c++){const cell=ws.getCell(r,c);cell.font={name:'Calibri',size:12,bold:r===7};cell.alignment=CEN;cell.border=thinAll;}
+  const sigRow=ws.getRow(lastData+2);sigRow.eachCell({includeEmpty:true},cell=>{cell.font={name:'Calibri',size:12,bold:true};cell.alignment=CEN;});
+  try{
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    const base=(locStr||getProjs().find(p=>p.id===CUR)?.name||'Estimate').replace(/[^A-Za-z0-9\u0900-\u097F]+/g,'_').slice(0,80);
+    a.download='Estimate_'+base+'_'+today()+'.xlsx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast('⬇ Setup exported','#00a86b');
+  }catch(e){toast('⚠ Export failed: '+e.message.slice(0,50));}
+}
+
+function downloadProjectBackup(){
+  // Complete, re-importable JSON snapshot of the running project.
+  const projName=getProjs().find(p=>p.id===CUR)?.name||'Project';
+  const backup={
+    _format:'FieldGrid-backup',_version:1,
+    exportedAt:new Date().toISOString(),
+    projectId:CUR,projectName:projName,
+    poles:S.poles,components:S.components,locations:S.locations,
+    counters:S.counters,cableConnect:S.cableConnect,
+    gpxTracks:(typeof gpxTracks!=='undefined'?gpxTracks:[])
+  };
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=projName.replace(/[\\/:*?"<>|]+/g,'_').slice(0,80)+'.json';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  toast('⬇ Backup saved','#1e8449');
+}
+function restoreProjectBackup(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  inp.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const b=JSON.parse(ev.target.result);
+        if(b._format!=='FieldGrid-backup')throw new Error('Not a FieldGrid backup file');
+        S.poles=Array.isArray(b.poles)?b.poles:[];
+        S.components=Array.isArray(b.components)?b.components:[];
+        S.locations=Array.isArray(b.locations)?b.locations:[];
+        S.counters=b.counters||{};
+        S.cableConnect=b.cableConnect??null;
+        pSet('poles',S.poles);pSet('components',S.components);pSet('locations',S.locations);
+        if(typeof gpxTracks!=='undefined'){gpxTracks=Array.isArray(b.gpxTracks)?b.gpxTracks:[];try{saveGpxState();}catch(_){}}
+        // Restore the project name in the project list too, so the running project is
+        // renamed to match the backup (the user can refine it later via Rename).
+        if(b.projectName){
+          const ls=getProjs();
+          const idx=ls.findIndex(p=>p.id===CUR);
+          if(idx>=0){ls[idx]=Object.assign({},ls[idx],{name:b.projectName});saveProjs(ls);renderProjSel&&renderProjSel();renderProjList&&renderProjList();}
+        }
+        renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();
+        if(typeof updateGPXUI==='function')try{updateGPXUI();}catch(_){}
+        if(mapInitialised)refreshMap();
+        if(document.getElementById('bom-tbl'))renderReport();
+        toast('✅ Backup restored: '+(b.projectName||'project'),'#1e8449');
+      }catch(err){toast('⚠ '+err.message.slice(0,60),'#e74c3c');}
+    };
+    rd.readAsText(file);
+  };
+  inp.click();
+}
+function clearProject(){
+  const projName=getProjs().find(p=>p.id===CUR)?.name||'this project';
+  const hasData=S.poles.length||S.components.length||S.locations.length||(typeof gpxTracks!=='undefined'&&gpxTracks.length);
+  if(!hasData){toast('Nothing to clear — project is already empty');return;}
+
+  // STEP 1 — strongly encourage a backup download first.
+  const wantBackup=confirm('Before clearing "'+projName+'", download a backup?\n\nThe backup is a single .json file that restores EVERYTHING later (poles, GPS, components, locations, GPX tracks).\n\n• OK = download backup now\n• Cancel = skip backup');
+  if(wantBackup){
+    downloadProjectBackup();
+  }
+
+  // STEP 2 — final confirmation to delete.
+  const ok=confirm('Clear ALL data for "'+projName+'" now?\n\nThis permanently deletes every recorded pole, all components, locations, counters and loaded GPX tracks for this project.\n\nYou can reopen the project later only from a backup file.\n\nProceed?');
+  if(!ok)return;
+
+  // Wipe ALL project storage keys
+  try{Object.keys(localStorage).filter(k=>k.startsWith('fg_p_'+CUR+'_')).forEach(k=>localStorage.removeItem(k));}catch(e){}
+  // Wipe in-memory state (start completely empty)
+  S.poles=[];S.components=[];S.locations=[];S.counters={};S.cableConnect=null;
+  // Wipe GPX tracks
+  if(typeof gpxTracks!=='undefined'){gpxTracks=[];gpxTrackVisible=true;}
+  gpxTrack=null;
+  try{if(typeof saveGpxState==='function')saveGpxState();}catch(e){}
+  if(typeof gpxTrackLayer!=='undefined'&&gpxTrackLayer&&leafletMap){leafletMap.removeLayer(gpxTrackLayer);gpxTrackLayer=null;}
+  // Clear record form
+  const codeEl=document.getElementById('inp-code');if(codeEl){codeEl.value='';codeEl.dataset.autoFilled='1';}
+  const remEl=document.getElementById('inp-rem');if(remEl)remEl.value='';
+  const locEl=document.getElementById('inp-loc');if(locEl)locEl.value='';
+  // Default project name input must be EMPTY after clearing the project.
+  const npEl=document.getElementById('new-proj-name');if(npEl)npEl.value='';
+  const mpEl=document.getElementById('modal-proj-name');if(mpEl)mpEl.value='';
+  setUpz('📂','Tap to upload SDS estimate file','Excel (.xlsx) · locations read from any "Work At:" row');
+  const st=document.getElementById('parse-st');if(st){st.className='sbar';st.innerHTML='';}
+  // GPX UI reset
+  try{if(typeof updateGPXUI==='function')updateGPXUI();}catch(e){}
+  ['gpx-show-btn','snap-all-btn','gpx-clear-btn','gpx-sync-btn'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display='none';});
+  renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();if(mapInitialised)refreshMap();
+  if(document.getElementById('bom-tbl'))renderReport();
+  cancelEdit();toast('🗑 "'+projName+'" cleared','#1e8449');
+}
+function renderAll(){renderComps();renderLocs();if(document.getElementById('pole-list'))renderPoleList();}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+async function init(){
+  await authCheck();
+  initProjects();
+  if(getProjs().length){loadState();renderAll();}
+  const wire=(id,fn)=>{const el=document.getElementById(id);if(el){el.addEventListener('click',fn);}};
+  // (Clear and Fit-All buttons use inline onclick in the HTML so they work even if any
+  //  earlier init step throws — addEventListener wiring here is intentionally not used.)
+  document.getElementById('inp-code')?.addEventListener('input',function(){this.dataset.autoFilled='0';});
+  document.getElementById('new-proj-name')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();createProject();}if(e.key==='Escape')toggleNewProj();});
+}
+init();
+</script>
+<script>
+/* ── PWA: inline web-app manifest (keeps the app a single HTML file) ── */
+(function(){
+  try{
+    var icon='data:image/svg+xml,'+encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'+
+      '<rect width="512" height="512" rx="96" fill="#154360"/>'+
+      '<g fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round">'+
+      '<path d="M120 150 V362 M256 120 V392 M392 150 V362"/>'+
+      '<path d="M96 200 H416 M96 312 H416"/></g>'+
+      '<circle cx="256" cy="256" r="30" fill="#2ecc71"/></svg>');
+    var manifest={
+      name:'FieldGrid Pro',short_name:'FieldGrid',
+      description:'Offline pole survey & SDS field tool',
+      start_url:'.',scope:'.',display:'standalone',orientation:'any',
+      background_color:'#f4f6f8',theme_color:'#154360',
+      icons:[
+        {src:icon,sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'},
+        {src:icon,sizes:'512x512',type:'image/svg+xml',purpose:'any maskable'}
+      ]
+    };
+    var blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
+    var link=document.createElement('link');
+    link.rel='manifest';link.href=URL.createObjectURL(blob);
+    document.head.appendChild(link);
+    var ai=document.createElement('link');
+    ai.rel='apple-touch-icon';ai.href=icon;document.head.appendChild(ai);
+  }catch(e){}
+})();
+
+/* ── PWA: register the service worker for offline use ── */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      // If a new version is waiting, activate it on next load automatically.
+      if(reg.waiting)reg.waiting.postMessage('SKIP_WAITING');
+      reg.addEventListener('updatefound',function(){
+        var nw=reg.installing;
+        if(nw)nw.addEventListener('statechange',function(){
+          if(nw.state==='installed'&&navigator.serviceWorker.controller){
+            nw.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    }).catch(function(err){
+      // Service workers need https:// or localhost. On file:// this is expected to fail.
+      console.warn('FieldGrid: service worker not registered —',err&&err.message);
+    });
+    var reloading=false;
+    navigator.serviceWorker.addEventListener('controllerchange',function(){
+      if(reloading)return;reloading=true;window.location.reload();
+    });
+  });
+}
+</script>
+</body>
+</html>
