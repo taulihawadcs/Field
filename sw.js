@@ -1,30 +1,30 @@
 /* ════════════════════════════════════════════════════════════════════════
-   FieldGrid — Service Worker
-   Built for: FieldGrid_Pro_v24.html
+   FieldGrid / NAAPJAACH — Service Worker
+   Built for: NAAPJAACH_FINAL.html
    ------------------------------------------------------------------------
    Gives the app offline capability so a surveyor can keep recording poles,
    editing data and viewing already-loaded map tiles with no signal.
 
    CACHING STRATEGY
-   • App shell (the HTML page + any same-origin files) → network-first, fall
-     back to cache. You always get the freshest build online and the app still
-     opens offline.
+   • App shell (the HTML page itself + same-origin files) → network-first,
+     fall back to whatever HTML page is cached. You always get the freshest
+     build online, and the app still opens offline regardless of the HTML
+     filename (NAAPJAACH_FINAL.html, index.html, …).
    • CDN libraries (Leaflet, xlsx-js-style, ExcelJS, jsPDF, Font Awesome,
      Google Fonts) → stale-while-revalidate. Served instantly from cache,
      refreshed in the background. Excel/PDF export keeps working offline.
    • Map tiles (OpenStreetMap, OpenTopoMap, ArcGIS imagery, Google satellite)
-     → cache-first with a rolling cap. Areas you have already viewed stay
-     available offline; new tiles cache as you pan/zoom while online.
+     → cache-first with a rolling cap. Areas already viewed stay available
+     offline; new tiles cache as you pan/zoom while online.
 
    HOW TO USE
-   • Put this sw.js file in the SAME folder as the FieldGrid HTML, and serve
-     both over http(s) — not file://. A service worker cannot run from a
-     file:// URL.
+   • Put this sw.js in the SAME folder as the HTML, and serve both over
+     http(s) — not file://. A service worker cannot run from a file:// URL.
    • Bump CACHE_VERSION below whenever you ship a new build so clients drop
      the old cache on their next load.
    ════════════════════════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'v24';
+const CACHE_VERSION = 'v25';
 const SHELL_CACHE = 'fieldgrid-shell-' + CACHE_VERSION;
 const LIB_CACHE   = 'fieldgrid-libs-'  + CACHE_VERSION;
 const TILE_CACHE  = 'fieldgrid-tiles-' + CACHE_VERSION;
@@ -32,21 +32,22 @@ const TILE_CACHE  = 'fieldgrid-tiles-' + CACHE_VERSION;
 // Cap on cached map tiles to avoid unbounded storage growth.
 const MAX_TILES = 1500;
 
-// Same-origin shell URLs to try to pre-cache. The actual HTML filename may
-// vary (FieldGrid_Pro_v24.html, app.html, index.html, …) so we keep this
-// list to relative roots; the HTML is also cached at runtime when fetched.
+// Same-origin shell URLs to TRY to pre-cache. The real HTML filename varies,
+// so we keep this to relative roots; the actual HTML page is also cached at
+// runtime the first time it is fetched (see the navigate handler).
 const SHELL_URLS = [
   './',
-  './index.html'
+  './index.html',
+  './NAAPJAACH_FINAL.html'
 ];
 
-// CDN libraries the app depends on (matches v24's <script>/<link> imports).
-// Matched loosely so subdomains of these hosts also match.
+// CDN libraries the app depends on (matches the HTML's <script>/<link>).
+// Matched so subdomains of these hosts also match.
 const LIB_HOSTS = [
   'unpkg.com',                    // Leaflet JS + CSS
   'cdn.jsdelivr.net',             // xlsx-js-style
   'cdnjs.cloudflare.com',         // ExcelJS, jsPDF, Font Awesome
-  'fonts.googleapis.com',         // Segoe UI fallback CSS
+  'fonts.googleapis.com',         // Google Fonts CSS
   'fonts.gstatic.com'             // font files referenced by the CSS above
 ];
 
@@ -62,7 +63,13 @@ const TILE_HOSTS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
-      .then(cache => cache.addAll(SHELL_URLS).catch(() => {/* ok if some 404 */}))
+      // addAll is atomic — one 404 aborts the whole batch — so cache each URL
+      // individually and ignore any that 404 (e.g. index.html may not exist).
+      .then(cache => Promise.all(
+        SHELL_URLS.map(u =>
+          cache.add(u).catch(() => { /* ok if this particular URL 404s */ })
+        )
+      ))
       .then(() => self.skipWaiting())
   );
 });
@@ -78,12 +85,37 @@ self.addEventListener('activate', event => {
 });
 
 // Let the page trigger an immediate activation when a new SW is waiting.
+// The HTML posts 'SKIP_WAITING' to the installing/waiting worker.
 self.addEventListener('message', event => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 const isTile = url => TILE_HOSTS.some(h => url.hostname.endsWith(h) || url.hostname.includes(h));
 const isLib  = url => LIB_HOSTS.some(h => url.hostname === h || url.hostname.endsWith('.' + h));
+
+// Find any cached HTML document to use as an offline navigation fallback,
+// whatever its filename. Tries the known shell URLs first, then scans the
+// shell cache for the first cached navigation/HTML response.
+async function offlineShellFallback(req) {
+  const cache = await caches.open(SHELL_CACHE);
+  // 1) Exact request (the page the user is on)
+  const exact = await cache.match(req, { ignoreSearch: true });
+  if (exact) return exact;
+  // 2) Known shell roots
+  for (const u of SHELL_URLS) {
+    const hit = await cache.match(u);
+    if (hit) return hit;
+  }
+  // 3) Anything HTML we cached at runtime
+  const keys = await cache.keys();
+  for (const k of keys) {
+    if (/\.html?($|\?)/i.test(k.url) || k.url.endsWith('/')) {
+      const hit = await cache.match(k);
+      if (hit) return hit;
+    }
+  }
+  return Response.error();
+}
 
 // ── FETCH ──────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', event => {
@@ -100,7 +132,7 @@ self.addEventListener('fetch', event => {
           caches.open(SHELL_CACHE).then(c => c.put(req, copy));
           return res;
         })
-        .catch(() => caches.match(req).then(r => r || caches.match('./index.html') || caches.match('./')))
+        .catch(() => offlineShellFallback(req))
     );
     return;
   }
@@ -117,7 +149,7 @@ self.addEventListener('fetch', event => {
               trimCache(TILE_CACHE, MAX_TILES);
             }
             return res;
-          }).catch(() => hit); // offline & uncached → let Leaflet show its blank tile
+          }).catch(() => hit); // offline & uncached → Leaflet shows its blank tile
         })
       )
     );
