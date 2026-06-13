@@ -586,19 +586,44 @@ function toast(msg,col){
 // AUTH
 // ═══════════════════════════════════════════
 const AUTH_HASH='fg_auth_hash', AUTH_SESS='fg_unlocked';
-async function sha256(t){const b=new TextEncoder().encode(t),h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+async function sha256(t){
+  // Preferred: Web Crypto (requires a secure context — https or localhost).
+  if(window.crypto&&crypto.subtle&&crypto.subtle.digest){
+    try{
+      const b=new TextEncoder().encode(t);
+      const h=await crypto.subtle.digest('SHA-256',b);
+      return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('');
+    }catch(e){/* fall through to JS fallback below */}
+  }
+  // Fallback: lightweight non-crypto hash so the gate still works over plain
+  // http:// or file:// where crypto.subtle is unavailable. (Tagged so stored
+  // hashes from the two methods never collide.)
+  let h1=0xdeadbeef,h2=0x41c6ce57;
+  for(let i=0;i<t.length;i++){const ch=t.charCodeAt(i);h1=Math.imul(h1^ch,2654435761);h2=Math.imul(h2^ch,1597334677);}
+  h1=Math.imul(h1^(h1>>>16),2246822507);h1^=Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507);h2^=Math.imul(h1^(h1>>>13),3266489909);
+  return 'fb_'+(4294967296*(2097151&h2)+(h1>>>0)).toString(16);
+}
 async function authCheck(){
-  if(sessionStorage.getItem(AUTH_SESS)==='1'){document.getElementById('auth-gate').style.display='none';return;}
-  const stored=localStorage.getItem(AUTH_HASH);
   const gate=document.getElementById('auth-gate'), inp=document.getElementById('auth-pw'), btn=document.getElementById('auth-go'), err=document.getElementById('auth-err');
+  if(sessionStorage.getItem(AUTH_SESS)==='1'){gate.style.display='none';return;}
+  const stored=localStorage.getItem(AUTH_HASH);
   if(!stored){inp.placeholder='Create a password (min 4 chars)';btn.textContent='SET PASSWORD →';err.style.display='block';err.style.color='var(--success)';err.textContent='First-time setup — choose a password.';}
   const attempt=async()=>{
-    const pw=inp.value.trim();
-    if(pw.length<4){err.style.display='block';err.style.color='var(--danger)';err.textContent='Password must be at least 4 characters.';return;}
-    const hash=await sha256(pw);
-    if(!stored){localStorage.setItem(AUTH_HASH,hash);sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
-    else if(hash===stored){sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
-    else{err.style.display='block';err.style.color='var(--danger)';err.textContent='Wrong password.';inp.value='';inp.focus();}
+    try{
+      const pw=inp.value.trim();
+      if(pw.length<4){err.style.display='block';err.style.color='var(--danger)';err.textContent='Password must be at least 4 characters.';return;}
+      btn.disabled=true;
+      const hash=await sha256(pw);
+      btn.disabled=false;
+      if(!stored){localStorage.setItem(AUTH_HASH,hash);sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
+      else if(hash===stored){sessionStorage.setItem(AUTH_SESS,'1');gate.style.display='none';}
+      else{err.style.display='block';err.style.color='var(--danger)';err.textContent='Wrong password.';inp.value='';inp.focus();}
+    }catch(e){
+      btn.disabled=false;
+      err.style.display='block';err.style.color='var(--danger)';
+      err.textContent='Unlock error: '+(e&&e.message?e.message:e)+' — try reloading.';
+    }
   };
   btn.addEventListener('click',attempt);
   inp.addEventListener('keydown',e=>{if(e.key==='Enter')attempt();});
@@ -2835,12 +2860,17 @@ function renderAll(){renderComps();renderLocs();if(document.getElementById('pole
 // INIT
 // ═══════════════════════════════════════════
 async function init(){
-  await authCheck();
-  initProjects();
-  if(getProjs().length){loadState();renderAll();}
-  const wire=(id,fn)=>{const el=document.getElementById(id);if(el){el.addEventListener('click',fn);}};
-  // (Clear and Fit-All buttons use inline onclick in the HTML so they work even if any
-  //  earlier init step throws — addEventListener wiring here is intentionally not used.)
+  try{ await authCheck(); }
+  catch(e){
+    // Never let an auth-setup error leave the page stuck — surface it.
+    const err=document.getElementById('auth-err');
+    if(err){err.style.display='block';err.style.color='var(--danger)';err.textContent='Init error: '+(e&&e.message?e.message:e);}
+    console.error('authCheck failed:',e);
+  }
+  try{
+    initProjects();
+    if(getProjs().length){loadState();renderAll();}
+  }catch(e){ console.error('Project init failed:',e); }
   document.getElementById('inp-code')?.addEventListener('input',function(){this.dataset.autoFilled='0';});
   document.getElementById('new-proj-name')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();createProject();}if(e.key==='Escape')toggleNewProj();});
 }
