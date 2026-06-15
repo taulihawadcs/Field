@@ -1,6 +1,6 @@
 /* ════════════════════════════════════════════════════════════════════════
    FieldGrid / NAAPJAACH — Service Worker
-   Built for: NAAPJAACH_FINAL.html
+   Built for: NAAPJAACH_FINAL_pro.html
    ------------------------------------------------------------------------
    Gives the app offline capability so a surveyor can keep recording poles,
    editing data and viewing already-loaded map tiles with no signal.
@@ -9,7 +9,7 @@
    • App shell (the HTML page itself + same-origin files) → network-first,
      fall back to whatever HTML page is cached. You always get the freshest
      build online, and the app still opens offline regardless of the HTML
-     filename (NAAPJAACH_FINAL.html, index.html, …).
+     filename (NAAPJAACH_FINAL_pro.html, index.html, …).
    • CDN libraries (Leaflet, xlsx-js-style, ExcelJS, jsPDF, Font Awesome,
      Google Fonts) → stale-while-revalidate. Served instantly from cache,
      refreshed in the background. Excel/PDF export keeps working offline.
@@ -24,7 +24,7 @@
      the old cache on their next load.
    ════════════════════════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'v25';
+const CACHE_VERSION = 'v26';
 const SHELL_CACHE = 'fieldgrid-shell-' + CACHE_VERSION;
 const LIB_CACHE   = 'fieldgrid-libs-'  + CACHE_VERSION;
 const TILE_CACHE  = 'fieldgrid-tiles-' + CACHE_VERSION;
@@ -38,7 +38,8 @@ const MAX_TILES = 1500;
 const SHELL_URLS = [
   './',
   './index.html',
-  './NAAPJAACH_FINAL.html'
+  './NAAPJAACH_FINAL_pro.html',
+  './NAAPJAACH_FINAL.html'        // kept for older bookmarks / filenames
 ];
 
 // CDN libraries the app depends on (matches the HTML's <script>/<link>).
