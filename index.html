@@ -2498,21 +2498,44 @@ async function downloadMapPDF(){
     const P=(lat,lng)=>leafletMap.latLngToContainerPoint([lat,lng]);
 
     // Draws route polylines + waypoint dots + name labels + span labels onto a context.
-    // Mirrors refreshMap() exactly so the PDF matches the on-screen map.
+    // Mirrors refreshMap() exactly so the PDF matches the on-screen map, INCLUDING the
+    // connection-aware styling: connected legs are drawn by the cable layer (solid +
+    // distance), un-connected legs between two recorded poles are faint grey dashed
+    // with no label, and raw/unmatched track is the neutral track colour.
     function drawVectors(c){
       if(!gpxTrackVisible)return;
+      c.lineJoin='round'; c.lineCap='round';
+
+      // ── Route, drawn CONNECTION-AWARE per segment (same rules as the live map) ──
       gpxTracks.forEach((track,ti)=>{
         const pts=track.pts; if(!pts.length)return;
         const tCol=trackColors[ti%trackColors.length];
-        c.lineJoin='round'; c.lineCap='round';
-        // route shadow
-        c.strokeStyle='rgba(0,0,0,0.25)'; c.lineWidth=6; c.beginPath();
-        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
-        c.stroke();
-        // route colour
-        c.strokeStyle=tCol; c.globalAlpha=0.85; c.lineWidth=3; c.beginPath();
-        pts.forEach((pt,i)=>{const p=P(pt.lat,pt.lng); i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});
-        c.stroke(); c.globalAlpha=1;
+        const boundLoc=locationForGpxName(track.name);
+        for(let i=1;i<pts.length;i++){
+          const a=pts[i-1], b=pts[i];
+          const pa=P(a.lat,a.lng), pb=P(b.lat,b.lng);
+          const curNamed=(b.name||'').trim(), prevNamed=(a.name||'').trim();
+          let style={color:tCol,weight:3,opacity:.85,dash:null,shadow:true};
+          if(boundLoc&&prevNamed&&curNamed){
+            const poA=poleForWaypoint(prevNamed,boundLoc), poB=poleForWaypoint(curNamed,boundLoc);
+            if(poA&&poB){
+              if(polesAreConnected(poA,poB)){
+                // cable present → drawn by the cable layer below; skip here
+                continue;
+              }else{
+                style={color:'#b8c0c8',weight:2,opacity:.7,dash:[5,5],shadow:false}; // no cable
+              }
+            }
+          }
+          if(style.shadow){
+            c.strokeStyle='rgba(0,0,0,0.22)'; c.lineWidth=style.weight+3; c.setLineDash([]);
+            c.beginPath(); c.moveTo(pa.x,pa.y); c.lineTo(pb.x,pb.y); c.stroke();
+          }
+          c.strokeStyle=style.color; c.globalAlpha=style.opacity; c.lineWidth=style.weight;
+          c.setLineDash(style.dash||[]);
+          c.beginPath(); c.moveTo(pa.x,pa.y); c.lineTo(pb.x,pb.y); c.stroke();
+          c.globalAlpha=1; c.setLineDash([]);
+        }
         // ── Location name label below midpoint of the track ──
         if(pts.length>1){
           const midPt=pts[Math.floor(pts.length/2)];
@@ -2525,9 +2548,38 @@ async function downloadMapPDF(){
           c.fillStyle=tCol; c.globalAlpha=0.9; c.fillText(locLabel,mp.x,mp.y+8); c.globalAlpha=1;
         }
       });
+
+      // ── CABLE LAYER: solid line + distance label for every connected pole pair ──
+      // (matches refreshMap's CABLE SPANS BETWEEN CONNECTED POLES block)
+      poleConnEdges().forEach(({a,b})=>{
+        if(!a.lat||!a.lng||!b.lat||!b.lng)return;       // need both ends matched
+        const existing=a.poleType==='existing'||b.poleType==='existing';
+        const col=existing?'#888':NEW_COL;
+        const pa=P(a.lat,a.lng), pb=P(b.lat,b.lng);
+        // shadow
+        c.strokeStyle='rgba(0,0,0,0.25)'; c.lineWidth=5; c.setLineDash([]);
+        c.beginPath(); c.moveTo(pa.x,pa.y); c.lineTo(pb.x,pb.y); c.stroke();
+        // cable
+        c.strokeStyle=col; c.globalAlpha=0.9; c.lineWidth=3;
+        c.setLineDash(existing?[6,4]:[]);
+        c.beginPath(); c.moveTo(pa.x,pa.y); c.lineTo(pb.x,pb.y); c.stroke();
+        c.globalAlpha=1; c.setLineDash([]);
+        // distance label at midpoint
+        if(zoom>=15){
+          const d=haversine(a.lat,a.lng,b.lat,b.lng);
+          const mp=P((a.lat+b.lat)/2,(a.lng+b.lng)/2), label=d.toFixed(0)+'m';
+          c.font='700 10px Arial,Helvetica,sans-serif';
+          c.textBaseline='middle'; c.textAlign='center';
+          c.lineWidth=3; c.strokeStyle='#fff'; c.lineJoin='round';
+          c.strokeText(label,mp.x,mp.y);
+          c.fillStyle='#1a1a1a'; c.fillText(label,mp.x,mp.y);
+        }
+      });
+
       if(zoom<15)return;
       gpxTracks.forEach((track)=>{
         const pts=track.pts; if(!pts.length)return;
+        const boundLoc=locationForGpxName(track.name);
         const candidates=[];
         pts.forEach((pt,i)=>{const nm=(pt.name||'').trim(); if(nm)candidates.push({pt,i,nm});});
         const maxLabels=zoom>=17?200:zoom>=16?80:30;
@@ -2538,7 +2590,7 @@ async function downloadMapPDF(){
           const p=P(cd.pt.lat,cd.pt.lng);
           c.beginPath(); c.arc(p.x,p.y,3,0,Math.PI*2);
           c.fillStyle='#111'; c.globalAlpha=0.85; c.fill();
-          c.globalAlpha=1; c.lineWidth=1; c.strokeStyle='#111'; c.stroke();
+          c.globalAlpha=1; c.lineWidth=1; c.strokeStyle='#111'; c.setLineDash([]); c.stroke();
           if(showLbl){
             c.font='700 11px Arial,Helvetica,sans-serif';
             c.textBaseline='middle'; c.textAlign='left';
@@ -2547,8 +2599,9 @@ async function downloadMapPDF(){
             c.fillStyle='#111'; c.fillText(cd.nm,p.x+7,p.y);
           }
         });
-        // span labels
-        if(zoom>=16){
+        // span labels — only for UNBOUND (raw) tracks; bound tracks get their distance
+        // labels from the cable layer above (connected pairs only).
+        if(zoom>=16&&!boundLoc){
           for(let k=1;k<candidates.length;k++){
             const a=candidates[k-1], b=candidates[k];
             if(b.i-a.i>5)continue;
